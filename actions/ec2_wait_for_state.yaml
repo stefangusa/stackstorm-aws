@@ -6,6 +6,8 @@ parameters:
   instance_id:
     required: true
     type: string
+  queue:
+    type: string
   state:
     default: running
     required: true
