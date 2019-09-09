@@ -155,10 +155,14 @@ class AWSSQSSensor(PollingSensor):
 
     def _setup_target_regions_sqs(self):
         for region in self.target_regions:
-            assumed_role = boto3.client('sts').assume_role(
-                RoleArn=self._get_config_entry(region, 'cross_roles_arns'),
-                RoleSessionName='StackStormEvents'
-            )
+            try:
+                assumed_role = boto3.client('sts').assume_role(
+                    RoleArn=self._get_config_entry(region, 'cross_roles_arns'),
+                    RoleSessionName='StackStormEvents'
+                )
+            except Exception: #todo find the right one
+                self._logger.error('Could not assume role on %s'.format(region))
+                continue
 
             cross_session = Session(
                 region_name=region,
@@ -169,8 +173,7 @@ class AWSSQSSensor(PollingSensor):
 
             self.cross_sessions[region] = cross_session
             try:
-                sqs_res = cross_session.resource('sqs')
-                self.cross_sqs_res[region] = sqs_res
+                self.cross_sqs_res[region] = cross_session.resource('sqs')
             except NoRegionError:
                 self._logger.warning("The specified region '%s' is invalid", region)
 
