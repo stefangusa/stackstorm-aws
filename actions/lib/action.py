@@ -9,6 +9,7 @@ import boto.route53
 import boto.vpc
 import boto3
 
+from botocore.exceptions import ClientError
 from st2common.runners.base_action import Action
 from ec2parsers import ResultSets
 
@@ -17,6 +18,8 @@ class BaseAction(Action):
 
     def __init__(self, config):
         super(BaseAction, self).__init__(config)
+
+        self.cross_region = config.get('cross_region', False)
 
         self.credentials = {
             'region': None,
@@ -60,6 +63,20 @@ class BaseAction(Action):
             self.credentials['region'] = region
 
         self.resultsets = ResultSets()
+
+    def change_credentials(self, target_region):
+        if target_region and self.cross_region:
+            try:
+                assumed_role = boto3.client('sts').assume_role(
+                    RoleArn=self._get_config_entry(target_region, 'cross_roles_arns'),
+                    RoleSessionName='StackStormEvents'
+                )
+                self.credentials['region'] = target_region
+                self.credentials['aws_access_key_id'] = assumed_role["Credentials"]["AccessKeyId"],
+                self.credentials['aws_secret_access_key'] = assumed_role["Credentials"]["SecretAccessKey"],
+                self.credentials['aws_session_token'] = assumed_role["Credentials"]["SessionToken"]
+            except ClientError:
+                self._logger.error('Could not assume role on %s'.format(target_region))
 
     def ec2_connect(self):
         region = self.credentials['region']
