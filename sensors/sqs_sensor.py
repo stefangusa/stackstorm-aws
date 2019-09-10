@@ -160,7 +160,7 @@ class AWSSQSSensor(PollingSensor):
                     RoleArn=self._get_config_entry(region, 'cross_roles_arns'),
                     RoleSessionName='StackStormEvents'
                 )
-            except Exception: #todo find the right one
+            except ClientError:
                 self._logger.error('Could not assume role on %s'.format(region))
                 continue
 
@@ -180,7 +180,7 @@ class AWSSQSSensor(PollingSensor):
     def _get_queue_by_name(self, queueName, region=None):
         ''' Fetch QUEUE by it's name create new one if queue doesn't exist '''
         if region:
-            sqs_res = self.sqs_res['region']
+            sqs_res = self.cross_sqs_res['region']
         else:
             sqs_res = self.sqs_res
 
