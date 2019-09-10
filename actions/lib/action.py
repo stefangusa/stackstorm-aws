@@ -65,7 +65,7 @@ class BaseAction(Action):
         self.resultsets = ResultSets()
 
     def change_credentials(self, target_region):
-        if target_region and self.cross_region:
+        if target_region and self.cross_region and target_region != self.credentials['region']:
             try:
                 assumed_role = boto3.client('sts').assume_role(
                     RoleArn=self._get_config_entry(target_region, 'cross_roles_arns'),
