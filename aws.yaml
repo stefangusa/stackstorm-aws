@@ -1,8 +1,11 @@
 ---
+aws_access_key_id: None
+aws_secret_access_key: None
 environment: prod
 region: us-east-1
 debug: true
 cross_region: true
+service_notifications_sensor: {}
 
 target_regions:
   stage:
