@@ -46,6 +46,7 @@ class BaseAction(Action):
         access_key_id = config.get('aws_access_key_id', None)
         secret_access_key = config.get('aws_secret_access_key', None)
         region = config.get('region', None)
+        environment = config.get('environment', None)
 
         if access_key_id == "None":
             access_key_id = None
@@ -59,24 +60,30 @@ class BaseAction(Action):
             # Assume old-style config
             self.credentials = config['setup']
 
+        if environment:
+            self.environment = environment
+
         if region:
             self.credentials['region'] = region
 
         self.resultsets = ResultSets()
 
-    def change_credentials(self, target_region):
-        if target_region and self.cross_region and target_region != self.credentials['region']:
+    def change_credentials(self, environment=None, region=None):
+        if environment and self.cross_region and \
+                environment != self.environment and \
+                region != self.credentials['region']:
             try:
                 assumed_role = boto3.client('sts').assume_role(
-                    RoleArn=self._get_config_entry(target_region, 'cross_roles_arns'),
+                    RoleArn=self._get_config_entry(environment, 'cross_roles_arns')[region],
                     RoleSessionName='StackStormEvents'
                 )
-                self.credentials['region'] = target_region
+                self.environment = environment
+                self.credentials['region'] = region
                 self.credentials['aws_access_key_id'] = assumed_role["Credentials"]["AccessKeyId"],
                 self.credentials['aws_secret_access_key'] = assumed_role["Credentials"]["SecretAccessKey"],
                 self.credentials['aws_session_token'] = assumed_role["Credentials"]["SessionToken"]
             except ClientError:
-                self._logger.error('Could not assume role on %s'.format(target_region))
+                self._logger.error('Could not assume role on %s'.format(region))
 
     def ec2_connect(self):
         region = self.credentials['region']
