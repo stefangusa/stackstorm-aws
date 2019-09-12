@@ -1,26 +1,24 @@
 ---
+environment: prod
 region: us-east-1
 debug: true
 cross_region: true
 
 target_regions:
-  - us-west-2
-  - eu-west-1
+  stage:
+    - us-east-1
 
 cross_roles_arns:
-  us-west-2: roleARNone
-  eu-west-1: roleARNtwo
+  stage:
+    us-east-1: arn:aws:iam::317085423413:role/aam-nonproduction-us-east-1-role-stackstorm-events
 
 sqs_sensor:
-  input_queues:
-    - queuename
   cross_input_queues:
-    us-west-2:
-      - queuename1
-    eu-west-1:
-      - queuename2
+    stage:
+      us-east-1:
+        - aam-stackstorm-events-nonproduction-us-east-1
 
 sqs_other:
-  max_number_of_messages: 1
+  max_number_of_messages: 3
 
 

@@ -20,7 +20,7 @@ class BaseAction(Action):
         super(BaseAction, self).__init__(config)
 
         self.cross_region = config.get('cross_region', False)
-
+        self.logger.debug("Action - cross region %s".format(str(self.cross_region)))
         self.credentials = {
             'region': None,
             'aws_access_key_id': None,
@@ -73,6 +73,7 @@ class BaseAction(Action):
                 environment != self.environment and \
                 region != self.credentials['region']:
             try:
+                self.logger.debug("Changing credentials in %s-%s".format(environment, region))
                 assumed_role = boto3.client('sts').assume_role(
                     RoleArn=self._get_config_entry(environment, 'cross_roles_arns')[region],
                     RoleSessionName='StackStormEvents'
@@ -84,6 +85,7 @@ class BaseAction(Action):
                 self.credentials['aws_session_token'] = assumed_role["Credentials"]["SessionToken"]
             except ClientError:
                 self._logger.error('Could not assume role on %s'.format(region))
+            self.logger.debug('Success')
 
     def ec2_connect(self):
         region = self.credentials['region']

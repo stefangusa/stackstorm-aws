@@ -14,6 +14,7 @@ class ActionManager(action.BaseAction):
         '''
         Action runner method
         '''
+        self.logger.debug('run.py %s-%s'.format(kwargs.get('environment', None), kwargs.get('region', None)))
         self.change_credentials(kwargs.pop('environment', None), kwargs.pop('region', None))
         aws_action = kwargs.pop('action')
         module_path = kwargs.pop('module_path')

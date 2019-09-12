@@ -45,9 +45,12 @@ class AWSSQSSensor(PollingSensor):
         self.session = None
         self.sqs_res = None
 
+        self._logger.debug('Getting cross region args')
         self.cross_region = self._get_config_entry('cross_region')
+        self._logger.debug(self.cross_region)
         if self.cross_region:
             self.target_regions = self._get_config_entry('target_regions')
+            self._logger.debug(json.dumps(self.target_regions))
             if not self.target_regions:
                 self._logger.warning("Target regions should be configured.")
             self.cross_sessions = {}
@@ -55,14 +58,19 @@ class AWSSQSSensor(PollingSensor):
 
     def poll(self):
         # setting SQS ServiceResource object from the parameter of datastore or configuration file
+        self._logger.debug('May setup sqs')
         self._may_setup_sqs()
-
+        self._logger.debug('End may setup sqs')
+        self._logger.debug('Process Messages main')
         self._process_messages(self.input_queues)
+        self._logger.debug('End process messages main')
 
         if self.cross_region:
             for environment in self.cross_input_queues:
                 for region in environment:
+                    self._logger.debug('Process Messages %s-%s'.format(environment, region))
                     self._process_messages(self.cross_input_queues[environment][region], environment, region)
+                    self._logger.debug('End Process Messages %s-%s'.format(environment, region))
 
     def cleanup(self):
         pass
@@ -80,9 +88,11 @@ class AWSSQSSensor(PollingSensor):
 
     def _process_messages(self, input_queues, environment=None, region=None):
         for queue in input_queues:
+            self._logger.debug("queue %s in %s-%s".format(queue, environment, region))
             msgs = self._receive_messages(queue=self._get_queue_by_name(queue, environment, region),
                                           num_messages=self.max_number_of_messages)
             for msg in msgs:
+                self._logger.debug('Message: %s'.format(msg.body))
                 if msg:
                     payload = {"queue": queue,
                                "environment": environment,
@@ -118,9 +128,11 @@ class AWSSQSSensor(PollingSensor):
             self.input_queues = queues
         else:
             self.input_queues = []
+        self._logger.debug('Main queues:' + str(self.input_queues))
 
         if self.cross_region:
             self.cross_input_queues = self._get_config_entry(key='cross_input_queues', prefix='sqs_sensor')
+            self._logger.debug('Cross queues' + json.dumps(self.cross_input_queues))
             if not self.cross_input_queues:
                 self.cross_input_queues = {}
 
@@ -153,8 +165,11 @@ class AWSSQSSensor(PollingSensor):
                                region_name=self.aws_region)
 
         try:
+            self._logger.debug('Get main sqs resource')
             self.sqs_res = self.session.resource('sqs')
+            self._logger.debug('Success in Get main sqs resource')
         except NoRegionError:
+            self._logger.debug('Failed in Get main sqs resource')
             self._logger.warning("The specified region '%s' is invalid", self.aws_region)
 
     def _setup_target_regions_sqs(self):
@@ -164,24 +179,29 @@ class AWSSQSSensor(PollingSensor):
 
             for region in environment:
                 try:
+                    self._logger.debug('Assume role in %s-%s'.format(environment, region))
                     assumed_role = boto3.client('sts').assume_role(
                         RoleArn=self._get_config_entry(environment, 'cross_roles_arns')[region],
                         RoleSessionName='StackStormEvents'
                     )
+                    self._logger.debug('Success in Assume role in %s-%s'.format(environment, region))
                 except ClientError:
                     self._logger.error('Could not assume role on %s-%s'.format(environment, region))
                     continue
 
                 try:
+                    self._logger.debug('Get sqs resource in %s-%s'.format(environment, region))
                     cross_session = Session(
                         region_name=region,
                         aws_access_key_id=assumed_role["Credentials"]["AccessKeyId"],
                         aws_secret_access_key=assumed_role["Credentials"]["SecretAccessKey"],
                         aws_session_token=assumed_role["Credentials"]["SessionToken"]
                     )
+                    self._logger.debug('Success in get sqs resource in %s-%s'.format(environment, region))
                     self.cross_sessions[environment][region] = cross_session
                     self.cross_sqs_res[environment][region] = cross_session.resource('sqs')
                 except NoRegionError:
+                    self._logger.debug('Failed in get sqs resource in %s-%s'.format(environment, region))
                     self._logger.warning("The specified region '%s' is invalid", region)
 
     def _get_queue_by_name(self, queueName, environment=None, region=None):
@@ -190,10 +210,11 @@ class AWSSQSSensor(PollingSensor):
             sqs_res = self.cross_sqs_res[environment][region]
         else:
             sqs_res = self.sqs_res
-
+        self._logger.debug('Get queue by name in %s-%s'.format(environment, region))
         try:
             return sqs_res.get_queue_by_name(QueueName=queueName)
         except ClientError as e:
+            self._logger.debug('Failure in Get queue by name in %s-%s'.format(environment, region))
             if e.response['Error']['Code'] == 'AWS.SimpleQueueService.NonExistentQueue':
                 self._logger.warning("SQS Queue: %s doesn't exist, creating it.", queueName)
                 return sqs_res.create_queue(QueueName=queueName)

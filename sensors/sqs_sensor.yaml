@@ -12,6 +12,8 @@
         properties:
           queue:
             type: "string"
+          environment:
+            type: "string"
           region:
             type: "string"
           body:
