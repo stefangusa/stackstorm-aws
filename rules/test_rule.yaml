@@ -1,0 +1,7 @@
+---
+name: "test_rule"
+enabled: true
+trigger:
+    type: "aws.sqs_new_message"
+action:
+    ref: "aws.ec2_describe_instances"
