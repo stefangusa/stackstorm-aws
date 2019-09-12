@@ -61,7 +61,7 @@ class AWSSQSSensor(PollingSensor):
 
         if self.cross_region:
             for environment in self.cross_input_queues:
-                for region in environment:
+                for region in self.cross_input_queues[environment]:
                     self._process_messages(self.cross_input_queues[environment][region], environment, region)
 
     def cleanup(self):
@@ -162,7 +162,7 @@ class AWSSQSSensor(PollingSensor):
             self.cross_sessions[environment] = {}
             self.cross_sqs_res[environment] = {}
 
-            for region in environment:
+            for region in self.target_regions[environment]:
                 try:
                     assumed_role = boto3.client('sts').assume_role(
                         RoleArn=self._get_config_entry(environment, 'cross_roles_arns')[region],
