@@ -3,6 +3,7 @@ ST2 AWS pack action runner script
 '''
 
 from lib import action
+import json
 
 
 class ActionManager(action.BaseAction):
@@ -33,6 +34,7 @@ class ActionManager(action.BaseAction):
                 kwargs['tags'] = self.split_tags(kwargs['tags'])
         if aws_action in ('add_a', 'update_a'):
             kwargs['value'] = kwargs['value'].split(',')
+        self.logger.error(json.dumps(kwargs))
         if 'cls' in kwargs.keys():
             cls = kwargs.pop('cls')
             return self.do_method(module_path, cls, aws_action, **kwargs)

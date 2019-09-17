@@ -4,7 +4,7 @@ enabled: true
 trigger:
     type: "aws.sqs_new_message"
 action:
-    ref: "aws.ec2_describe_instances"
+    ref: "aws.test_ec2_start_instances"
     parameters:
         environment: "{{trigger.environment}}"
         region: "{{trigger.region}}"

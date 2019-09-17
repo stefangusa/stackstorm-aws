@@ -58,19 +58,14 @@ class AWSSQSSensor(PollingSensor):
 
     def poll(self):
         # setting SQS ServiceResource object from the parameter of datastore or configuration file
-        self._logger.info('May setup sqs')
         self._may_setup_sqs()
-        self._logger.info('End may setup sqs')
-        self._logger.info('Process Messages main')
+
         self._process_messages(self.input_queues)
-        self._logger.info('End process messages main')
 
         if self.cross_region:
             for environment in self.cross_input_queues:
                 for region in self.cross_input_queues[environment]:
-                    self._logger.info('Process Messages {}-{}'.format(environment, region))
                     self._process_messages(self.cross_input_queues[environment][region], environment, region)
-                    self._logger.info('End Process Messages {}-{}'.format(environment, region))
 
     def cleanup(self):
         pass
@@ -88,7 +83,6 @@ class AWSSQSSensor(PollingSensor):
 
     def _process_messages(self, input_queues, environment=None, region=None):
         for queue in input_queues:
-            self._logger.info("queue %s in {}-{}".format(queue, environment, region))
             msgs = self._receive_messages(queue=self._get_queue_by_name(queue, environment, region),
                                           num_messages=self.max_number_of_messages)
             for msg in msgs:
@@ -128,11 +122,9 @@ class AWSSQSSensor(PollingSensor):
             self.input_queues = queues
         else:
             self.input_queues = []
-        self._logger.info('Main queues:' + str(self.input_queues))
 
         if self.cross_region:
             self.cross_input_queues = self._get_config_entry(key='cross_input_queues', prefix='sqs_sensor')
-            self._logger.info('Cross queues' + json.dumps(self.cross_input_queues))
             if not self.cross_input_queues:
                 self.cross_input_queues = {}
 
@@ -159,17 +151,13 @@ class AWSSQSSensor(PollingSensor):
 
     def _setup_sqs(self):
         ''' Setup Boto3 structures '''
-        self._logger.info('Setting up SQS resources')
         self.session = Session(aws_access_key_id=self.aws_access_key,
                                aws_secret_access_key=self.aws_secret_key,
                                region_name=self.aws_region)
 
         try:
-            self._logger.info('Get main sqs resource')
             self.sqs_res = self.session.resource('sqs')
-            self._logger.info('Success in Get main sqs resource')
         except NoRegionError:
-            self._logger.info('Failed in Get main sqs resource')
             self._logger.warning("The specified region '%s' is invalid", self.aws_region)
 
     def _setup_target_regions_sqs(self):
@@ -179,29 +167,24 @@ class AWSSQSSensor(PollingSensor):
 
             for region in self.target_regions[environment]:
                 try:
-                    self._logger.info('Assume role in {}-{}'.format(environment, region))
                     assumed_role = boto3.client('sts').assume_role(
                         RoleArn=self._get_config_entry(environment, 'cross_roles_arns')[region],
                         RoleSessionName='StackStormEvents'
                     )
-                    self._logger.info('Success in Assume role in {}-{}'.format(environment, region))
                 except ClientError:
                     self._logger.error('Could not assume role on {}-{}'.format(environment, region))
                     continue
 
                 try:
-                    self._logger.info('Get sqs resource in {}-{}'.format(environment, region))
                     cross_session = Session(
                         region_name=region,
                         aws_access_key_id=assumed_role["Credentials"]["AccessKeyId"],
                         aws_secret_access_key=assumed_role["Credentials"]["SecretAccessKey"],
                         aws_session_token=assumed_role["Credentials"]["SessionToken"]
                     )
-                    self._logger.info('Success in get sqs resource in {}-{}'.format(environment, region))
                     self.cross_sessions[environment][region] = cross_session
                     self.cross_sqs_res[environment][region] = cross_session.resource('sqs')
                 except NoRegionError:
-                    self._logger.info('Failed in get sqs resource in {}-{}'.format(environment, region))
                     self._logger.warning("The specified region '%s' is invalid", region)
 
     def _get_queue_by_name(self, queueName, environment=None, region=None):
