@@ -70,20 +70,22 @@ class BaseAction(Action):
 
     def change_credentials(self, environment=None, region=None):
         if environment and self.cross_region and \
-                environment != self.environment and \
-                region != self.credentials['region']:
+                (environment != self.environment or
+                 region != self.credentials['region']):
             try:
                 assumed_role = boto3.client('sts').assume_role(
-                    RoleArn=self._get_config_entry(environment, 'cross_roles_arns')[region],
+                    RoleArn=self.config.get('cross_roles_arns')[environment][region],
                     RoleSessionName='StackStormEvents'
                 )
                 self.environment = environment
                 self.credentials['region'] = region
-                self.credentials['aws_access_key_id'] = assumed_role["Credentials"]["AccessKeyId"],
-                self.credentials['aws_secret_access_key'] = assumed_role["Credentials"]["SecretAccessKey"],
+                self.credentials['aws_access_key_id'] = assumed_role["Credentials"]["AccessKeyId"]
+                self.credentials['aws_secret_access_key'] = assumed_role["Credentials"]["SecretAccessKey"]
                 self.credentials['aws_session_token'] = assumed_role["Credentials"]["SessionToken"]
             except ClientError:
                 self._logger.error('Could not assume role on %s'.format(region))
+            except KeyError:
+                self._logger.error('Could not find cross region role ARN in the config file.')
 
     def ec2_connect(self):
         region = self.credentials['region']
