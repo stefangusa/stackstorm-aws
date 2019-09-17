@@ -4,6 +4,13 @@ aws_secret_access_key: secret_key
 region: us-east-1
 environment: prod
 debug: true
+st2_user_data: /opt/stackstorm/packs/aws/actions/scripts/bootstrap_user.sh
+
+service_notifications_sensor:
+  - host: localhost
+  - port: 12345
+  - path: /my-path
+
 cross_region: true
 
 target_regions:
@@ -34,6 +41,6 @@ sqs_sensor:
         - queuename3
 
 sqs_other:
-  max_number_of_messages: 5
+  max_number_of_messages: 1
 
 
