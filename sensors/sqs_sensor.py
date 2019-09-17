@@ -169,7 +169,7 @@ class AWSSQSSensor(PollingSensor):
                         RoleSessionName='StackStormEvents'
                     )
                 except ClientError:
-                    self._logger.error('Could not assume role on %s-%s'.format(environment, region))
+                    self._logger.error('Could not assume role on %s %s', environment, region)
                     continue
 
                 try:
@@ -198,11 +198,11 @@ class AWSSQSSensor(PollingSensor):
                 self._logger.warning("SQS Queue: %s doesn't exist, creating it.", queueName)
                 return sqs_res.create_queue(QueueName=queueName)
             elif e.response['Error']['Code'] == 'InvalidClientTokenId':
-                self._logger.warning("Cloudn't operate sqs because of invalid credential config")
+                self._logger.warning("Couldn't operate sqs because of invalid credential config")
             else:
                 raise
         except NoCredentialsError as e:
-            self._logger.warning("Cloudn't operate sqs because of invalid credential config")
+            self._logger.warning("Couldn't operate sqs because of invalid credential config")
         except EndpointConnectionError as e:
             self._logger.warning(e)
 
