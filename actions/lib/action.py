@@ -19,8 +19,6 @@ class BaseAction(Action):
     def __init__(self, config):
         super(BaseAction, self).__init__(config)
 
-        self.cross_region = config.get('cross_region', False)
-
         self.credentials = {
             'region': None,
             'aws_access_key_id': None,
@@ -46,7 +44,6 @@ class BaseAction(Action):
         access_key_id = config.get('aws_access_key_id', None)
         secret_access_key = config.get('aws_secret_access_key', None)
         region = config.get('region', None)
-        environment = config.get('environment', None)
 
         if access_key_id == "None":
             access_key_id = None
@@ -60,24 +57,31 @@ class BaseAction(Action):
             # Assume old-style config
             self.credentials = config['setup']
 
-        if environment:
-            self.environment = environment
+        self.account_id = boto3.client('sts').get_caller_identity().get('Account')
 
         if region:
             self.credentials['region'] = region
 
+        self.cross_roles_arns = self._get_cross_account_ids()
+
         self.resultsets = ResultSets()
 
-    def change_credentials(self, environment=None, region=None):
-        if environment and self.cross_region and \
-                (environment != self.environment or
-                 region != self.credentials['region']):
+    def _get_cross_account_ids(self):
+        cross_roles_arns = {}
+        cross_roles_arns_list = self.config.get('roles_arns') or []
+
+        for arn in cross_roles_arns_list:
+            cross_roles_arns[arn.split(':')[4]] = arn
+
+        return cross_roles_arns
+
+    def change_credentials(self, account_id=None, region=None):
+        if account_id != self.account_id:
             try:
                 assumed_role = boto3.client('sts').assume_role(
-                    RoleArn=self.config.get('cross_roles_arns')[environment][region],
+                    RoleArn=self.cross_roles_arns[account_id],
                     RoleSessionName='StackStormEvents'
                 )
-                self.environment = environment
                 self.credentials['region'] = region
                 self.credentials['aws_access_key_id'] = assumed_role["Credentials"]["AccessKeyId"]
                 self.credentials['aws_secret_access_key'] = assumed_role["Credentials"]["SecretAccessKey"]
@@ -86,6 +90,8 @@ class BaseAction(Action):
                 self._logger.error('Could not assume role on %s'.format(region))
             except KeyError:
                 self._logger.error('Could not find cross region role ARN in the config file.')
+        elif region != self.credentials['region']:
+            self.credentials['region'] = region
 
     def ec2_connect(self):
         region = self.credentials['region']

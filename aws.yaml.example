@@ -2,7 +2,6 @@
 aws_access_key_id: access_key
 aws_secret_access_key: secret_key
 region: us-east-1
-environment: prod
 debug: true
 st2_user_data: /opt/stackstorm/packs/aws/actions/scripts/bootstrap_user.sh
 
@@ -11,34 +10,19 @@ service_notifications_sensor:
   - port: 12345
   - path: /my-path
 
-cross_region: true
-
-target_regions:
-  prod:
-    - us-west-2
-    - eu-west-1
-  stage:
-    - us-east-1
-
-cross_roles_arns:
-  prod:
-    us-west-2: roleARNone
-    eu-west-1: roleARNtwo
-  stage:
-    us-east-1: roleARNthree
+roles_arns:
+  - arn:aws:iam::123456789098:role/rolename1
+  - arn:aws:iam::901234567812:role/rolename2
+  - arn:aws:iam::567890123489:role/rolename3
 
 sqs_sensor:
   input_queues:
-    - queuename
-  cross_input_queues:
-    prod:
-      us-west-2:
-        - queuename1
-      eu-west-1:
-        - queuename2
-    stage:
-      us-east-1:
-        - queuename3
+    - queue_name_1
+    - https://sqs.us-east-1.amazonaws.com/345678901223/queue_name_2
+    - https://sqs.us-west-2.amazonaws.com/123456789098/queue_name_3
+    - https://sqs.us-west-2.amazonaws.com/123456789098/queue_name_4
+    - https://sqs.eu-west-1.amazonaws.com/901234567812/queue_name_5
+    - https://sqs.sa-east-1.amazonaws.com/567890123489/queue_name_6
 
 sqs_other:
   max_number_of_messages: 1

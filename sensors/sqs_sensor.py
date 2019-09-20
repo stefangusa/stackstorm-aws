@@ -23,6 +23,7 @@ If any value exist in datastore it will be taken instead of any value in config.
 """
 
 import boto3
+import re
 import six
 import json
 from boto3.session import Session
@@ -34,35 +35,42 @@ from botocore.exceptions import EndpointConnectionError
 from st2reactor.sensor.base import PollingSensor
 
 
-class AWSSQSSensor(PollingSensor):
+class TestAWSSQSSensor(PollingSensor):
     def __init__(self, sensor_service, config=None, poll_interval=5):
-        super(AWSSQSSensor, self).__init__(sensor_service=sensor_service, config=config,
+        super(TestAWSSQSSensor, self).__init__(sensor_service=sensor_service, config=config,
                                            poll_interval=poll_interval)
 
     def setup(self):
         self._logger = self._sensor_service.get_logger(name=self.__class__.__name__)
 
-        self.session = None
-        self.sqs_res = None
-
-        self.cross_region = self._get_config_entry('cross_region')
-        if self.cross_region:
-            self.target_regions = self._get_config_entry('target_regions')
-            if not self.target_regions:
-                self._logger.warning("Target regions should be configured.")
-            self.cross_sessions = {}
-            self.cross_sqs_res = {}
+        self.account_id = self._get_account_id()
+        self.cross_roles_arns = self._get_cross_account_ids() or {}
+        self.credentials = {}
+        self.sessions = {}
+        self.sqs_res = {}
 
     def poll(self):
         # setting SQS ServiceResource object from the parameter of datastore or configuration file
         self._may_setup_sqs()
 
-        self._process_messages(self.input_queues)
+        for queue in self.input_queues:
+            if self._check_queue_if_url(queue):
+                account_id = self._get_account_id_from_queue_url(queue)
+                region = self._get_region_from_queue_url(queue)
+            else:
+                account_id = self.account_id
+                region = self.aws_region
 
-        if self.cross_region:
-            for environment in self.cross_input_queues:
-                for region in self.cross_input_queues[environment]:
-                    self._process_messages(self.cross_input_queues[environment][region], environment, region)
+            msgs = self._receive_messages(queue=self._get_queue(queue, account_id, region),
+                                          num_messages=self.max_number_of_messages)
+            for msg in msgs:
+                if msg:
+                    payload = {"queue": queue,
+                               "account_id": account_id,
+                               "region": region,
+                               "body": json.loads(msg.body)}
+                    self._sensor_service.dispatch(trigger="aws.test_sqs_new_message", payload=payload)
+                    msg.delete()
 
     def cleanup(self):
         pass
@@ -78,19 +86,17 @@ class AWSSQSSensor(PollingSensor):
     def remove_trigger(self, trigger):
         pass
 
-    def _process_messages(self, input_queues, environment=None, region=None):
-        for queue in input_queues:
-            msgs = self._receive_messages(queue=self._get_queue_by_name(queue, environment, region),
-                                          num_messages=self.max_number_of_messages)
-            for msg in msgs:
-                if msg:
-                    payload = {"queue": queue,
-                               "environment": environment,
-                               "region": region,
-                               "body": json.loads(msg.body)}
+    def _get_account_id(self):
+        return boto3.client('sts').get_caller_identity().get('Account')
 
-                    self._sensor_service.dispatch(trigger="aws.sqs_new_message", payload=payload)
-                    msg.delete()
+    def _get_cross_account_ids(self):
+        cross_roles_arns = {}
+        cross_roles_arns_list = self._get_config_entry('roles_arns') or []
+
+        for arn in cross_roles_arns_list:
+            cross_roles_arns[arn.split(':')[4]] = arn
+
+        return cross_roles_arns
 
     def _get_config_entry(self, key, prefix=None):
         ''' Get configuration values either from Datastore or config file. '''
@@ -119,84 +125,106 @@ class AWSSQSSensor(PollingSensor):
         else:
             self.input_queues = []
 
-        if self.cross_region:
-            self.cross_input_queues = self._get_config_entry(key='cross_input_queues', prefix='sqs_sensor')
-            if not self.cross_input_queues:
-                self.cross_input_queues = {}
-
-        self.aws_access_key = self._get_config_entry('aws_access_key_id')
-        self.aws_secret_key = self._get_config_entry('aws_secret_access_key')
+        self.credentials[self.account_id] = (self._get_config_entry('aws_access_key_id'),
+                                             self._get_config_entry('aws_secret_access_key'),
+                                             None)
         self.aws_region = self._get_config_entry('region')
-        self.environment = self._get_config_entry('environment')
         self.max_number_of_messages = self._get_config_entry('max_number_of_messages',
                                                              prefix='sqs_other')
 
         # checker configuration is update, or not
-        def _is_same_credentials():
-            c = self.session.get_credentials()
-            return c is not None and \
-                c.access_key == self.aws_access_key and \
-                c.secret_key == self.aws_secret_key and \
-                self.session.region_name == self.aws_region
+        def _is_same_credentials(session, account_id):
+            c = session.get_credentials()
 
-        if self.session is None or not _is_same_credentials():
-            self._setup_sqs()
+            same_credentials = c is not None and \
+                c.access_key == self.credentials[account_id][0] and \
+                c.secret_key == self.credentials[account_id][1]
 
-        if self.cross_region:
-            self._setup_target_regions_sqs()
+            if account_id != self.account_id:
+                return same_credentials and c.token == self.credentials[account_id][2]
+            else:
+                return same_credentials
 
-    def _setup_sqs(self):
+        for input_queue in self.input_queues:
+            account_id = self._get_account_id_from_queue_url(input_queue)
+            session = self.sessions.get(account_id, None)
+
+            same_credentials = _is_same_credentials(session, account_id) if session else False
+            if session is None or not same_credentials:
+                session = self._setup_session() if account_id == self.account_id else \
+                    self._setup_multiaccount_session(account_id)
+
+            region = self._get_region_from_queue_url(input_queue)
+            if not same_credentials:
+                self._setup_sqs(session, account_id, region)
+
+    def _setup_session(self):
         ''' Setup Boto3 structures '''
         self._logger.debug('Setting up SQS resources')
-        self.session = Session(aws_access_key_id=self.aws_access_key,
-                               aws_secret_access_key=self.aws_secret_key,
-                               region_name=self.aws_region)
+        session = Session(aws_access_key_id=self.credentials[self.account_id][0],
+                          aws_secret_access_key=self.credentials[self.account_id][1])
 
+        self.sessions[self.account_id] = session
+        return session
+
+    def _setup_multiaccount_session(self, account_id):
         try:
-            self.sqs_res = self.session.resource('sqs')
+            assumed_role = boto3.client('sts').assume_role(
+                RoleArn=self.cross_roles_arns[account_id],
+                RoleSessionName='StackStormEvents'
+            )
+        except ClientError:
+            self._logger.error('Could not assume role on %s', account_id)
+            return
+        self.credentials[account_id] = (assumed_role["Credentials"]["AccessKeyId"],
+                                        assumed_role["Credentials"]["SecretAccessKey"],
+                                        assumed_role["Credentials"]["SessionToken"])
+
+        session = Session(
+            aws_access_key_id=self.credentials[account_id][0],
+            aws_secret_access_key=self.credentials[account_id][1],
+            aws_session_token=self.credentials[account_id][2]
+        )
+        self.sessions[account_id] = session
+        return session
+
+    def _setup_sqs(self, session, account_id, region):
+        try:
+            if not self.sqs_res.get(account_id, None):
+                self.sqs_res[account_id] = {}
+            self.sqs_res[account_id][region] = session.resource('sqs', region_name=region)
         except NoRegionError:
-            self._logger.warning("The specified region '%s' is invalid", self.aws_region)
+            self._logger.warning("The specified region '%s' is invalid", region)
 
-    def _setup_target_regions_sqs(self):
-        for environment in self.target_regions:
-            self.cross_sessions[environment] = {}
-            self.cross_sqs_res[environment] = {}
+    def _check_queue_if_url(self, queue_url):
+        reg = re.compile(r"https?://")
+        if reg.match(queue_url[:7]) or reg.match(queue_url[:8]):
+            return True
+        return False
 
-            for region in self.target_regions[environment]:
-                try:
-                    assumed_role = boto3.client('sts').assume_role(
-                        RoleArn=self._get_config_entry(environment, 'cross_roles_arns')[region],
-                        RoleSessionName='StackStormEvents'
-                    )
-                except ClientError:
-                    self._logger.error('Could not assume role on %s %s', environment, region)
-                    continue
+    def _get_account_id_from_queue_url(self, queue_url):
+        if self._check_queue_if_url(queue_url):
+            return queue_url.split('/')[3]
+        return self.account_id
 
-                try:
-                    cross_session = Session(
-                        region_name=region,
-                        aws_access_key_id=assumed_role["Credentials"]["AccessKeyId"],
-                        aws_secret_access_key=assumed_role["Credentials"]["SecretAccessKey"],
-                        aws_session_token=assumed_role["Credentials"]["SessionToken"]
-                    )
-                    self.cross_sessions[environment][region] = cross_session
-                    self.cross_sqs_res[environment][region] = cross_session.resource('sqs')
-                except NoRegionError:
-                    self._logger.warning("The specified region '%s' is invalid", region)
+    def _get_region_from_queue_url(self, queue_url):
+        if self._check_queue_if_url(queue_url):
+            return queue_url.split('.')[1]
+        return self.aws_region
 
-    def _get_queue_by_name(self, queueName, environment=None, region=None):
+    def _get_queue(self, queue, account_id, region):
         ''' Fetch QUEUE by it's name create new one if queue doesn't exist '''
-        if environment:
-            sqs_res = self.cross_sqs_res[environment][region]
-        else:
-            sqs_res = self.sqs_res
-
         try:
-            return sqs_res.get_queue_by_name(QueueName=queueName)
+            sqs_res = self.sqs_res[account_id][region]
+            if account_id == self.account_id and region == self.aws_region:
+                return sqs_res.get_queue_by_name(QueueName=queue)
+            else:
+                return sqs_res.Queue(queue)
         except ClientError as e:
-            if e.response['Error']['Code'] == 'AWS.SimpleQueueService.NonExistentQueue':
-                self._logger.warning("SQS Queue: %s doesn't exist, creating it.", queueName)
-                return sqs_res.create_queue(QueueName=queueName)
+            if e.response['Error']['Code'] == 'AWS.SimpleQueueService.NonExistentQueue' and \
+                    account_id == self.account_id and region == self.aws_region:
+                self._logger.warning("SQS Queue: %s doesn't exist, creating it.", queue)
+                return sqs_res.create_queue(QueueName=queue)
             elif e.response['Error']['Code'] == 'InvalidClientTokenId':
                 self._logger.warning("Couldn't operate sqs because of invalid credential config")
             else:
