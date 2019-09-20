@@ -12,9 +12,5 @@
         properties:
           queue:
             type: "string"
-          account_id:
-            type: "string"
-          region:
-            type: "string"
           body:
             type: "object"

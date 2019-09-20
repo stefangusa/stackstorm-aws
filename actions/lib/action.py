@@ -75,7 +75,26 @@ class BaseAction(Action):
 
         return cross_roles_arns
 
-    def change_credentials(self, account_id=None, region=None):
+    def _check_queue_if_url(self, queue_url):
+        reg = re.compile(r"https?://")
+        if reg.match(queue_url[:7]) or reg.match(queue_url[:8]):
+            return True
+        return False
+
+    def _get_account_id_from_queue_url(self, queue_url):
+        if self._check_queue_if_url(queue_url):
+            return queue_url.split('/')[3]
+        return self.account_id
+
+    def _get_region_from_queue_url(self, queue_url):
+        if self._check_queue_if_url(queue_url):
+            return queue_url.split('.')[1]
+        return self.aws_region
+
+    def change_credentials(self, queue):
+        account_id = self._get_account_id_from_queue_url(queue)
+        region = self._get_region_from_queue_url(queue)
+
         if account_id != self.account_id:
             try:
                 assumed_role = boto3.client('sts').assume_role(

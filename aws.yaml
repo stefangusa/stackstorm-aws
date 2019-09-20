@@ -1,0 +1,17 @@
+---
+aws_access_key_id: access_key
+aws_secret_access_key: secret_key
+region: us-east-1
+debug: true
+st2_user_data: None
+service_notifications_sensor: {}
+
+roles_arns:
+  - arn:aws:iam::317085423413:role/aam-nonproduction-us-east-1-role-stackstorm-events
+
+sqs_sensor:
+  input_queues:
+    - https://sqs.us-east-1.amazonaws.com/317085423413/aam-stackstorm-events-nonproduction-us-east-1
+
+sqs_other:
+  max_number_of_messages: 1

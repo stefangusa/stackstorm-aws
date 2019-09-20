@@ -64,10 +64,9 @@ class TestAWSSQSSensor(PollingSensor):
             msgs = self._receive_messages(queue=self._get_queue(queue, account_id, region),
                                           num_messages=self.max_number_of_messages)
             for msg in msgs:
+                self._logger.info('Message: {}'.format(msg.body))
                 if msg:
                     payload = {"queue": queue,
-                               "account_id": account_id,
-                               "region": region,
                                "body": json.loads(msg.body)}
                     self._sensor_service.dispatch(trigger="aws.test_sqs_new_message", payload=payload)
                     msg.delete()
@@ -150,6 +149,7 @@ class TestAWSSQSSensor(PollingSensor):
             session = self.sessions.get(account_id, None)
 
             same_credentials = _is_same_credentials(session, account_id) if session else False
+
             if session is None or not same_credentials:
                 session = self._setup_session() if account_id == self.account_id else \
                     self._setup_multiaccount_session(account_id)
@@ -215,16 +215,19 @@ class TestAWSSQSSensor(PollingSensor):
     def _get_queue(self, queue, account_id, region):
         ''' Fetch QUEUE by it's name create new one if queue doesn't exist '''
         try:
+            self._logger.info('Get queue by name in {}-{}'.format(account_id, region))
             sqs_res = self.sqs_res[account_id][region]
-            if account_id == self.account_id and region == self.aws_region:
+            if not self._check_queue_if_url(queue):
                 return sqs_res.get_queue_by_name(QueueName=queue)
             else:
                 return sqs_res.Queue(queue)
         except ClientError as e:
-            if e.response['Error']['Code'] == 'AWS.SimpleQueueService.NonExistentQueue' and \
-                    account_id == self.account_id and region == self.aws_region:
-                self._logger.warning("SQS Queue: %s doesn't exist, creating it.", queue)
-                return sqs_res.create_queue(QueueName=queue)
+            if e.response['Error']['Code'] == 'AWS.SimpleQueueService.NonExistentQueue':
+                if not self._check_queue_if_url(queue):
+                    self._logger.warning("SQS Queue: %s doesn't exist, creating it.", queue)
+                    return sqs_res.create_queue(QueueName=queue)
+                else:
+                    self._logger.warning("SQS Queue: %s doesn't exist.", queue)
             elif e.response['Error']['Code'] == 'InvalidClientTokenId':
                 self._logger.warning("Couldn't operate sqs because of invalid credential config")
             else:
