@@ -2,7 +2,7 @@
 name: "test_rule"
 enabled: true
 trigger:
-    type: "aws.sqs_new_message"
+    type: "aws.test_sqs_new_message"
 action:
     ref: "aws.test_ec2_start_instances"
     parameters:

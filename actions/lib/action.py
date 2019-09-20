@@ -81,8 +81,8 @@ class BaseAction(Action):
                 )
                 self.environment = environment
                 self.credentials['region'] = region
-                self.credentials['aws_access_key_id'] = assumed_role["Credentials"]["AccessKeyId"],
-                self.credentials['aws_secret_access_key'] = assumed_role["Credentials"]["SecretAccessKey"],
+                self.credentials['aws_access_key_id'] = assumed_role["Credentials"]["AccessKeyId"]
+                self.credentials['aws_secret_access_key'] = assumed_role["Credentials"]["SecretAccessKey"]
                 self.credentials['aws_session_token'] = assumed_role["Credentials"]["SessionToken"]
             except ClientError:
                 self.logger.error('Could not assume role on %s'.format(region))
