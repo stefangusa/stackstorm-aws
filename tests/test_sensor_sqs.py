@@ -20,6 +20,24 @@ class SQSSensorTestCase(BaseSensorTestCase):
         def get_queue_by_name(self, **kwargs):
             return SQSSensorTestCase.MockQueue(self.msgs)
 
+        def Queue(self, queue):
+            return SQSSensorTestCase.MockQueue(self.msgs)
+
+    class MockResourceNonExistentQueue(object):
+        def __init__(self, msgs=[]):
+            self.msgs = msgs
+
+        def get_queue_by_name(self, **kwargs):
+            if kwargs.pop('QueueName') == 'input_queue':
+                raise ClientError({'Error': {'Code': 'AWS.SimpleQueueService.NonExistentQueue'}}, 'sqs_test')
+            return SQSSensorTestCase.MockQueue(self.msgs)
+
+        def create_queue(self, **kwargs):
+            pass
+
+        def Queue(self, queue):
+            return SQSSensorTestCase.MockQueue(self.msgs)
+
     class MockResourceRaiseClientError(object):
         def __init__(self, error_code=''):
             self.error_code = error_code
@@ -27,13 +45,47 @@ class SQSSensorTestCase(BaseSensorTestCase):
         def get_queue_by_name(self, **kwargs):
             raise ClientError({'Error': {'Code': self.error_code}}, 'sqs_test')
 
+        def Queue(self, queue):
+            return SQSSensorTestCase.MockQueue()
+
     class MockResourceRaiseNoCredentialsError(object):
         def get_queue_by_name(self, **kwargs):
             raise NoCredentialsError()
 
+        def Queue(self, queue):
+            return SQSSensorTestCase.MockQueue()
+
     class MockResourceRaiseEndpointConnectionError(object):
         def get_queue_by_name(self, **kwargs):
             raise EndpointConnectionError(endpoint_url='')
+
+        def Queue(self, queue):
+            return SQSSensorTestCase.MockQueue()
+
+    class MockStsClient(object):
+        class MockClientMeta(object):
+            def __init__(self):
+                self.service_model = {}
+
+        def __init__(self):
+            self.meta = self.MockClientMeta()
+
+        def get_caller_identity(self):
+            return SQSSensorTestCase.MockCallerIdentity()
+
+        def assume_role(self, RoleArn, RoleSessionName):
+            return {
+                'Credentials': {
+                    'AccessKeyId': 'access_key_id_example',
+                    'SecretAccessKey': 'secret_access_key_example',
+                    'SessionToken': 'session_token_example'
+                }
+            }
+
+    class MockCallerIdentity(object):
+        def get(self, attribute):
+            if attribute == 'Account':
+                return '111222333444'
 
     class MockQueue(object):
         def __init__(self, msgs=[]):
@@ -58,6 +110,7 @@ class SQSSensorTestCase(BaseSensorTestCase):
     def load_yaml(self, filename):
         return yaml.safe_load(self.get_fixture_content(filename))
 
+    @mock.patch.object(Session, 'client', mock.Mock(return_value=MockStsClient()))
     def test_poll_with_blank_config(self):
         sensor = self.get_sensor_instance(config=self.blank_config)
 
@@ -66,6 +119,7 @@ class SQSSensorTestCase(BaseSensorTestCase):
 
         self.assertEqual(self.get_dispatched_triggers(), [])
 
+    @mock.patch.object(Session, 'client', mock.Mock(return_value=MockStsClient()))
     @mock.patch.object(Session, 'resource', mock.Mock(return_value=MockResource()))
     def test_poll_without_message(self):
         sensor = self.get_sensor_instance(config=self.full_config)
@@ -75,6 +129,7 @@ class SQSSensorTestCase(BaseSensorTestCase):
 
         self.assertEqual(self.get_dispatched_triggers(), [])
 
+    @mock.patch.object(Session, 'client', mock.Mock(return_value=MockStsClient()))
     @mock.patch.object(Session, 'resource', mock.Mock(return_value=MockResource(['{"foo":"bar"}'])))
     def test_poll_with_message(self):
         sensor = self.get_sensor_instance(config=self.full_config)
@@ -85,6 +140,29 @@ class SQSSensorTestCase(BaseSensorTestCase):
         self.assertTriggerDispatched(trigger='aws.sqs_new_message')
         self.assertNotEqual(self.get_dispatched_triggers(), [])
 
+    @mock.patch.object(Session, 'client', mock.Mock(return_value=MockStsClient()))
+    @mock.patch.object(Session, 'resource', mock.Mock(return_value=MockResource(['{"foo":"bar"}'])))
+    def test_poll_with_queue_as_url(self):
+        sensor = self.get_sensor_instance(config=self.full_config)
+
+        sensor.setup()
+        sensor.poll()
+
+        self.assertTriggerDispatched(trigger='aws.sqs_new_message')
+        self.assertNotEqual(self.get_dispatched_triggers(), [])
+
+    @mock.patch.object(Session, 'client', mock.Mock(return_value=MockStsClient()))
+    @mock.patch.object(Session, 'resource', mock.Mock(return_value=MockResourceNonExistentQueue(['{"foo":"bar"}'])))
+    def test_poll_with_non_existent_queue(self):
+        sensor = self.get_sensor_instance(config=self.full_config)
+
+        sensor.setup()
+        sensor.poll()
+
+        self.assertTriggerDispatched(trigger='aws.sqs_new_message')
+        self.assertNotEqual(self.get_dispatched_triggers(), [])
+
+    @mock.patch.object(Session, 'client', mock.Mock(return_value=MockStsClient()))
     @mock.patch.object(Session, 'resource', mock.Mock(return_value=MockResource(['{"foo":"bar"}'])))
     def test_set_input_queues_config_dynamically(self):
         sensor = self.get_sensor_instance(config=self.blank_config)
@@ -111,6 +189,7 @@ class SQSSensorTestCase(BaseSensorTestCase):
         # get message from queue 'hoge', 'fuga' then 'puyo'
         self.assertEqual([x['payload']['queue'] for x in contexts], ['hoge', 'fuga', 'puyo'])
 
+    @mock.patch.object(Session, 'client', mock.Mock(return_value=MockStsClient()))
     @mock.patch.object(Session, 'resource', mock.Mock(return_value=MockResource(['{"foo":"bar"}'])))
     def test_set_input_queues_config_with_list(self):
         # set 'input_queues' config with list type
@@ -126,6 +205,7 @@ class SQSSensorTestCase(BaseSensorTestCase):
         self.assertTriggerDispatched(trigger='aws.sqs_new_message')
         self.assertEqual([x['payload']['queue'] for x in contexts], ['foo', 'bar'])
 
+    @mock.patch.object(Session, 'client', mock.Mock(return_value=MockStsClient()))
     @mock.patch.object(Session, 'resource',
                        mock.Mock(return_value=MockResourceRaiseClientError('InvalidClientTokenId')))
     def test_fails_with_invalid_token(self):
@@ -136,6 +216,7 @@ class SQSSensorTestCase(BaseSensorTestCase):
 
         self.assertEqual(self.get_dispatched_triggers(), [])
 
+    @mock.patch.object(Session, 'client', mock.Mock(return_value=MockStsClient()))
     @mock.patch.object(Session, 'resource',
                        mock.Mock(return_value=MockResourceRaiseNoCredentialsError()))
     def test_fails_without_credentials(self):
@@ -146,6 +227,7 @@ class SQSSensorTestCase(BaseSensorTestCase):
 
         self.assertEqual(self.get_dispatched_triggers(), [])
 
+    @mock.patch.object(Session, 'client', mock.Mock(return_value=MockStsClient()))
     @mock.patch.object(Session, 'resource',
                        mock.Mock(return_value=MockResourceRaiseEndpointConnectionError()))
     def test_fails_with_invalid_region(self):

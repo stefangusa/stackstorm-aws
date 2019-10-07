@@ -14,10 +14,6 @@ class ActionManager(action.BaseAction):
         '''
         Action runner method
         '''
-        cls = kwargs.get('cls', None)
-        if cls and 'ec2' in cls.lower():
-            self.change_credentials(kwargs.pop('queue', None))
-
         aws_action = kwargs.pop('action')
         module_path = kwargs.pop('module_path')
         if aws_action == 'run_instances' and not kwargs.get('UserData', None):

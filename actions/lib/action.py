@@ -9,6 +9,7 @@ import boto.route53
 import boto.vpc
 import boto3
 
+from boto3.session import Session
 from botocore.exceptions import ClientError
 from st2common.runners.base_action import Action
 from ec2parsers import ResultSets
@@ -57,60 +58,30 @@ class BaseAction(Action):
             # Assume old-style config
             self.credentials = config['setup']
 
-        self.account_id = boto3.client('sts').get_caller_identity().get('Account')
-
         if region:
             self.credentials['region'] = region
 
-        self.cross_roles_arns = self._get_cross_account_ids()
+        self.session = Session(aws_access_key_id=self.credentials['aws_access_key_id'],
+                               aws_secret_access_key=self.credentials['aws_secret_access_key'])
+        self.account_id = self.session.client('sts').get_caller_identity().get('Account')
 
+        self.cross_roles_arns = {arn.split(':')[4]: arn for arn in self.config.get('roles_arns', [])}
         self.resultsets = ResultSets()
 
-    def _get_cross_account_ids(self):
-        cross_roles_arns = {}
-        cross_roles_arns_list = self.config.get('roles_arns') or []
-
-        for arn in cross_roles_arns_list:
-            cross_roles_arns[arn.split(':')[4]] = arn
-
-        return cross_roles_arns
-
-    def _check_queue_if_url(self, queue_url):
-        reg = re.compile(r"https?://")
-        if reg.match(queue_url[:7]) or reg.match(queue_url[:8]):
-            return True
-        return False
-
-    def _get_account_id_from_queue_url(self, queue_url):
-        if self._check_queue_if_url(queue_url):
-            return queue_url.split('/')[3]
-        return self.account_id
-
-    def _get_region_from_queue_url(self, queue_url):
-        if self._check_queue_if_url(queue_url):
-            return queue_url.split('.')[1]
-        return self.aws_region
-
-    def change_credentials(self, queue):
-        account_id = self._get_account_id_from_queue_url(queue)
-        region = self._get_region_from_queue_url(queue)
-
+    def assume_role(self, account_id):
         if account_id != self.account_id:
             try:
-                assumed_role = boto3.client('sts').assume_role(
+                assumed_role = self.session.client('sts').assume_role(
                     RoleArn=self.cross_roles_arns[account_id],
                     RoleSessionName='StackStormEvents'
                 )
-                self.credentials['region'] = region
                 self.credentials['aws_access_key_id'] = assumed_role["Credentials"]["AccessKeyId"],
                 self.credentials['aws_secret_access_key'] = assumed_role["Credentials"]["SecretAccessKey"],
                 self.credentials['aws_session_token'] = assumed_role["Credentials"]["SessionToken"]
             except ClientError:
-                self._logger.error('Could not assume role on %s'.format(region))
+                self._logger.error('Could not assume role on account with id: %s'.format(account_id))
             except KeyError:
                 self._logger.error('Could not find cross region role ARN in the config file.')
-        elif region != self.credentials['region']:
-            self.credentials['region'] = region
 
     def ec2_connect(self):
         region = self.credentials['region']
@@ -154,8 +125,9 @@ class BaseAction(Action):
                 tag_dict[k] = v
         return tag_dict
 
-    def wait_for_state(self, instance_id, state, timeout=10, retries=3):
+    def wait_for_state(self, instance_id, state, account_id, region, timeout=10, retries=3):
         state_list = {}
+        self.assume_role(account_id, region)
         obj = self.ec2_connect()
         eventlet.sleep(timeout)
         instance_list = []
@@ -182,6 +154,12 @@ class BaseAction(Action):
 
     def do_method(self, module_path, cls, action, **kwargs):
         module = importlib.import_module(module_path)
+
+        if 'account_id' in kwargs:
+            self.assume_role(kwargs.pop('account_id'))
+        if 'region' in kwargs:
+            self.credentials['region'] = kwargs.pop('region')
+
         # hack to connect to correct region
         if cls == 'EC2Connection':
             obj = self.ec2_connect()
