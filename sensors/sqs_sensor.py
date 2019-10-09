@@ -46,7 +46,9 @@ class AWSSQSSensor(PollingSensor):
         self.sessions = {}
         self.sqs_res = {}
 
-        self.cross_roles_arns = {arn.split(':')[4]: arn for arn in self.config.get('roles_arns', [])}
+        self.cross_roles_arns = {
+            arn.split(':')[4]: arn for arn in (self._get_config_entry('roles_arns', 'sqs_sensor') or [])
+        }
 
     def poll(self):
         # setting SQS ServiceResource object from the parameter of datastore or configuration file
@@ -127,8 +129,7 @@ class AWSSQSSensor(PollingSensor):
             else:
                 return same_credentials
 
-        for input_queue in self.input_queues:
-            account_id, region = self._get_info(input_queue)
+        for account_id in self.cross_roles_arns:
             session = self.sessions.get(account_id, None)
 
             same_credentials = _is_same_credentials(session, account_id) if session else False
@@ -137,7 +138,7 @@ class AWSSQSSensor(PollingSensor):
                 if account_id == self.account_id:
                     self._setup_session()
                 else:
-                    self._setup_multiaccount_session(account_id, region)
+                    self._setup_multiaccount_session(account_id)
 
     def _setup_session(self):
         ''' Setup Boto3 structures '''
@@ -149,9 +150,8 @@ class AWSSQSSensor(PollingSensor):
             self.credentials[self.account_id] = (self.access_key_id, self.secret_access_key, None)
 
         self.sessions[self.account_id] = session
-        self._setup_sqs(session, self.account_id, self.aws_region)
 
-    def _setup_multiaccount_session(self, account_id, region):
+    def _setup_multiaccount_session(self, account_id):
         try:
             assumed_role = self.sessions[self.account_id].client('sts').assume_role(
                 RoleArn=self.cross_roles_arns[account_id],
@@ -159,9 +159,6 @@ class AWSSQSSensor(PollingSensor):
             )
         except ClientError:
             self._logger.error('Could not assume role on %s', account_id)
-            return
-        except KeyError:
-            self._logger.error('Role ARN does not exist for %s', account_id)
             return
 
         self.credentials[account_id] = (assumed_role["Credentials"]["AccessKeyId"],
@@ -174,15 +171,16 @@ class AWSSQSSensor(PollingSensor):
             aws_session_token=self.credentials[account_id][2]
         )
         self.sessions[account_id] = session
-        self._setup_sqs(session, account_id, region)
 
     def _setup_sqs(self, session, account_id, region):
         try:
             if not self.sqs_res.get(account_id, None):
                 self.sqs_res[account_id] = {}
             self.sqs_res[account_id][region] = session.resource('sqs', region_name=region)
+            return self.sqs_res[account_id][region]
         except UnknownEndpointError:
-            self._logger.warning("Service 'sqs not available in region %s", region)
+            self._logger.error("Service 'sqs not available in region %s", region)
+            raise
 
     def _get_info(self, queue):
         if queue.startswith('http://') or queue.startswith('https://'):
@@ -194,9 +192,13 @@ class AWSSQSSensor(PollingSensor):
         try:
             sqs_res = self.sqs_res[account_id][region]
         except KeyError:
-            self._logger.error('Session for account id %s does not exist', account_id)
-            return
-
+            try:
+                sqs_res = self._setup_sqs(self.sessions[account_id], account_id, region)
+            except KeyError:
+                self._logger.error('Session for account id %s does not exist', account_id)
+                return
+            except UnknownEndpointError:
+                return
         try:
             if queue.startswith('http://') or queue.startswith('https://'):
                 return sqs_res.Queue(queue)
