@@ -26,7 +26,7 @@ import six
 import json
 from boto3.session import Session
 from botocore.exceptions import ClientError
-from botocore.exceptions import NoRegionError
+from botocore.exceptions import UnknownEndpointError
 from botocore.exceptions import NoCredentialsError
 from botocore.exceptions import EndpointConnectionError
 
@@ -160,6 +160,10 @@ class AWSSQSSensor(PollingSensor):
         except ClientError:
             self._logger.error('Could not assume role on %s', account_id)
             return
+        except KeyError:
+            self._logger.error('Role ARN does not exist for %s', account_id)
+            return
+
         self.credentials[account_id] = (assumed_role["Credentials"]["AccessKeyId"],
                                         assumed_role["Credentials"]["SecretAccessKey"],
                                         assumed_role["Credentials"]["SessionToken"])
@@ -177,8 +181,8 @@ class AWSSQSSensor(PollingSensor):
             if not self.sqs_res.get(account_id, None):
                 self.sqs_res[account_id] = {}
             self.sqs_res[account_id][region] = session.resource('sqs', region_name=region)
-        except NoRegionError:
-            self._logger.warning("The specified region '%s' is invalid", region)
+        except UnknownEndpointError:
+            self._logger.warning("Service 'sqs not available in region %s", region)
 
     def _get_info(self, queue):
         if queue.startswith('http://') or queue.startswith('https://'):
@@ -187,7 +191,12 @@ class AWSSQSSensor(PollingSensor):
 
     def _get_queue(self, queue, account_id, region):
         ''' Fetch QUEUE by it's name create new one if queue doesn't exist '''
-        sqs_res = self.sqs_res[account_id][region]
+        try:
+            sqs_res = self.sqs_res[account_id][region]
+        except KeyError:
+            self._logger.error('Session for account id %s does not exist', account_id)
+            return
+
         try:
             if queue.startswith('http://') or queue.startswith('https://'):
                 return sqs_res.Queue(queue)

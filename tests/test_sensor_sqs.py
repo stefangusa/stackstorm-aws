@@ -4,6 +4,7 @@ import yaml
 from boto3.session import Session
 from botocore.exceptions import ClientError
 from botocore.exceptions import NoCredentialsError
+from botocore.exceptions import UnknownEndpointError
 from botocore.exceptions import EndpointConnectionError
 from st2tests.base import BaseSensorTestCase
 
@@ -62,6 +63,13 @@ class SQSSensorTestCase(BaseSensorTestCase):
         def Queue(self, queue):
             return SQSSensorTestCase.MockQueue()
 
+    class MockSessionRaiseUnknownEndpointError(object):
+        def client(self, type, **kwargs):
+            return SQSSensorTestCase.MockStsClient()
+
+        def session(self, type, **kwargs):
+            raise UnknownEndpointError()
+
     class MockStsClient(object):
         class MockClientMeta(object):
             def __init__(self):
@@ -81,6 +89,20 @@ class SQSSensorTestCase(BaseSensorTestCase):
                     'SessionToken': 'session_token_example'
                 }
             }
+
+    class MockStsClientRaiseClientError(object):
+        class MockClientMeta(object):
+            def __init__(self):
+                self.service_model = {}
+
+        def __init__(self):
+            self.meta = self.MockClientMeta()
+
+        def get_caller_identity(self):
+            return SQSSensorTestCase.MockCallerIdentity()
+
+        def assume_role(self, RoleArn, RoleSessionName):
+            raise ClientError({'Error': {'Code': 'AccessDenied'}}, 'sqs_test')
 
     class MockCallerIdentity(object):
         def get(self, attribute):
@@ -237,3 +259,37 @@ class SQSSensorTestCase(BaseSensorTestCase):
         sensor.poll()
 
         self.assertEqual(self.get_dispatched_triggers(), [])
+
+    @mock.patch.object(Session, 'client', mock.Mock(return_value=MockStsClientRaiseClientError()))
+    @mock.patch.object(Session, 'resource', mock.Mock(return_value=MockResource()))
+    def test_fails_assuming_role(self):
+        sensor = self.get_sensor_instance(config=self.full_config)
+
+        sensor.setup()
+        sensor.poll()
+
+        self.assertEqual(self.get_dispatched_triggers(), [])
+
+    @mock.patch.object(Session, 'client', mock.Mock(return_value=MockStsClientRaiseClientError()))
+    @mock.patch.object(Session, 'resource',
+                       mock.Mock(side_effect=UnknownEndpointError(service_name='sqs', region_name='us-east-1')))
+    def test_fails_creating_sqs_resource(self):
+        sensor = self.get_sensor_instance(config=self.full_config)
+
+        sensor.setup()
+        sensor.poll()
+
+        self.assertEqual(self.get_dispatched_triggers(), [])
+
+    @mock.patch.object(Session, 'client', mock.Mock(return_value=MockStsClient()))
+    @mock.patch.object(Session, 'resource', mock.Mock(return_value=MockResource(['{"foo":"bar"}'])))
+    def test_poll_with_missing_arn(self):
+        config = self.full_config
+        config['roles_arns'] = []
+
+        sensor = self.get_sensor_instance(config=config)
+        sensor.setup()
+        sensor.poll()
+
+        self.assertNotEqual(self.get_dispatched_triggers(), [])
+        self.assertTriggerDispatched(trigger='aws.sqs_new_message')
