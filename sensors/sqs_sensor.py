@@ -50,10 +50,21 @@ class AWSSQSSensor(PollingSensor):
             arn.split(':')[4]: arn for arn in (self._get_config_entry('roles_arns', 'sqs_sensor') or [])
         }
 
-    def poll(self):
-        # setting SQS ServiceResource object from the parameter of datastore or configuration file
-        self._may_setup_sqs()
+        self._may_setup_sessions()
 
+    def poll(self):
+        queues = self._get_config_entry(key='input_queues', prefix='sqs_sensor')
+
+        # XXX: This is a hack as from datastore we can only receive a string while
+        # from config.yaml we can receive a list
+        if isinstance(queues, six.string_types):
+            self.input_queues = [x.strip() for x in queues.split(',')]
+        elif isinstance(queues, list):
+            self.input_queues = queues
+        else:
+            self.input_queues = []
+
+        # setting SQS ServiceResource object from the parameter of datastore or configuration file
         for queue in self.input_queues:
             account_id, region = self._get_info(queue)
             msgs = self._receive_messages(queue=self._get_queue(queue, account_id, region),
@@ -96,18 +107,7 @@ class AWSSQSSensor(PollingSensor):
 
         return value
 
-    def _may_setup_sqs(self):
-        queues = self._get_config_entry(key='input_queues', prefix='sqs_sensor')
-
-        # XXX: This is a hack as from datastore we can only receive a string while
-        # from config.yaml we can receive a list
-        if isinstance(queues, six.string_types):
-            self.input_queues = [x.strip() for x in queues.split(',')]
-        elif isinstance(queues, list):
-            self.input_queues = queues
-        else:
-            self.input_queues = []
-
+    def _may_setup_sessions(self):
         self.aws_region = self._get_config_entry('region')
         self.max_number_of_messages = self._get_config_entry('max_number_of_messages', prefix='sqs_other')
 

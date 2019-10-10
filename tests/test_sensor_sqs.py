@@ -31,10 +31,10 @@ class SQSSensorTestCase(BaseSensorTestCase):
         def get_queue_by_name(self, **kwargs):
             raise ClientError({'Error': {'Code': 'AWS.SimpleQueueService.NonExistentQueue'}}, 'sqs_test')
 
-        def create_queue(self, **kwargs):
-            pass
-
         def Queue(self, queue):
+            raise ClientError({'Error': {'Code': 'AWS.SimpleQueueService.NonExistentQueue'}}, 'sqs_test')
+
+        def create_queue(self, **kwargs):
             return SQSSensorTestCase.MockQueue(self.msgs)
 
     class MockResourceRaiseClientError(object):
@@ -178,14 +178,16 @@ class SQSSensorTestCase(BaseSensorTestCase):
         self._poll_with_message(self.multiaccount_config)
 
     @mock.patch.object(Session, 'client', mock.Mock(return_value=MockStsClient()))
-    @mock.patch.object(Session, 'resource', mock.Mock(return_value=MockResourceNonExistentQueue()))
+    @mock.patch.object(Session, 'resource', mock.Mock(return_value=MockResourceNonExistentQueue(['{"foo":"bar"}'])))
     def _poll_with_non_existent_queue(self, config):
         sensor = self.get_sensor_instance(config=config)
 
         sensor.setup()
         sensor.poll()
 
-        self.assertEqual(self.get_dispatched_triggers(), [])
+        contexts = self.get_dispatched_triggers()
+        self.assertNotEqual(contexts, [])
+        self.assertTriggerDispatched(trigger='aws.sqs_new_message')
 
     def test_poll_with_non_existent_queue_full_config(self):
         self._poll_with_non_existent_queue(self.full_config)
