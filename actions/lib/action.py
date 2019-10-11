@@ -65,7 +65,9 @@ class BaseAction(Action):
                                aws_secret_access_key=self.credentials['aws_secret_access_key'])
         self.account_id = self.session.client('sts').get_caller_identity().get('Account')
 
-        self.cross_roles_arns = {arn.split(':')[4]: arn for arn in self.config.get('roles_arns', [])}
+        self.cross_roles_arns = {
+            arn.split(':')[4]: arn for arn in self.config.get('action', {}).get('roles_arns', [])
+        }
         self.resultsets = ResultSets()
 
     def assume_role(self, account_id):
