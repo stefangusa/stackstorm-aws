@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import eventlet
@@ -9,6 +10,8 @@ import boto.route53
 import boto.vpc
 import boto3
 
+from boto3.session import Session
+from botocore.exceptions import ClientError
 from st2common.runners.base_action import Action
 from ec2parsers import ResultSets
 
@@ -44,11 +47,6 @@ class BaseAction(Action):
         secret_access_key = config.get('aws_secret_access_key', None)
         region = config.get('region', None)
 
-        if access_key_id == "None":
-            access_key_id = None
-        if secret_access_key == "None":
-            secret_access_key = None
-
         if access_key_id and secret_access_key:
             self.credentials['aws_access_key_id'] = access_key_id
             self.credentials['aws_secret_access_key'] = secret_access_key
@@ -59,24 +57,59 @@ class BaseAction(Action):
         if region:
             self.credentials['region'] = region
 
+        self.session = Session(aws_access_key_id=self.credentials['aws_access_key_id'],
+                               aws_secret_access_key=self.credentials['aws_secret_access_key'])
+
+        self.account_id = self.session.client('sts').get_caller_identity().get('Account')
+        self.cross_roles_arns = {
+            arn.split(':')[4]: arn for arn in self.config.get('action', {}).get('roles_arns', [])
+        }
+
         self.resultsets = ResultSets()
+
+    def assume_role(self, account_id):
+        ''' Assumes role and setup Boto3 session for the cross-account capability'''
+        if account_id == self.account_id:
+            return
+
+        try:
+            assumed_role = self.session.client('sts').assume_role(
+                RoleArn=self.cross_roles_arns[account_id],
+                RoleSessionName='StackStormEvents'
+            )
+            self.credentials.update({
+                'aws_access_key_id': assumed_role["Credentials"]["AccessKeyId"],
+                'aws_secret_access_key': assumed_role["Credentials"]["SecretAccessKey"],
+                'aws_session_token': assumed_role["Credentials"]["SessionToken"],
+                'security_token': assumed_role["Credentials"]["SessionToken"]
+            })
+        except ClientError:
+            self.logger.error('Could not assume role on account with id: %s', account_id)
+            raise
+        except KeyError:
+            self.logger.error('Could not find cross region role ARN in the config file.')
+            raise
 
     def ec2_connect(self):
         region = self.credentials['region']
         del self.credentials['region']
+        self.credentials.pop('aws_session_token', None)
         return boto.ec2.connect_to_region(region, **self.credentials)
 
     def vpc_connect(self):
         region = self.credentials['region']
         del self.credentials['region']
+        self.credentials.pop('aws_session_token', None)
         return boto.vpc.connect_to_region(region, **self.credentials)
 
     def cf_connect(self):
         region = self.credentials['region']
         del self.credentials['region']
+        self.credentials.pop('aws_session_token', None)
         return boto.cloudformation.connect_to_region(region, **self.credentials)
 
     def r53_connect(self):
+        self.credentials.pop('aws_session_token', None)
         route53_credentials = {
             key: self.credentials[key] for key in self.credentials if key != 'region'
         }
@@ -92,6 +125,7 @@ class BaseAction(Action):
     def get_boto3_session(self, resource):
         region = self.credentials['region']
         del self.credentials['region']
+        self.credentials.pop('security_token', None)
         return boto3.client(resource, region_name=region, **self.credentials)
 
     def split_tags(self, tags):
@@ -103,8 +137,15 @@ class BaseAction(Action):
                 tag_dict[k] = v
         return tag_dict
 
-    def wait_for_state(self, instance_id, state, timeout=10, retries=3):
+    def wait_for_state(self, instance_id, state, account_id=None, region=None, timeout=10,
+                       retries=3):
         state_list = {}
+
+        if account_id:
+            self.assume_role(account_id)
+        if region:
+            self.credentials['region'] = region
+
         obj = self.ec2_connect()
         eventlet.sleep(timeout)
         instance_list = []
@@ -112,8 +153,8 @@ class BaseAction(Action):
         for _ in range(retries + 1):
             try:
                 instance_list = obj.get_only_instances([instance_id, ])
-            except Exception:
-                self.logger.info("Waiting for instance to become available")
+            except Exception as e:
+                self.logger.info(e)
                 eventlet.sleep(timeout)
 
         for instance in instance_list:
@@ -131,6 +172,12 @@ class BaseAction(Action):
 
     def do_method(self, module_path, cls, action, **kwargs):
         module = importlib.import_module(module_path)
+
+        if 'account_id' in kwargs:
+            self.assume_role(kwargs.pop('account_id'))
+        if 'region' in kwargs:
+            self.credentials['region'] = kwargs.pop('region')
+
         # hack to connect to correct region
         if cls == 'EC2Connection':
             obj = self.ec2_connect()

@@ -1,7 +1,7 @@
 ---
   class_name: "AWSSQSSensor"
   entry_point: "sqs_sensor.py"
-  description: "Sensor which monitors a SQS queue for new messages"
+  description: "Sensor which monitors SQS queues for new messages"
   poll_interval: 30
   trigger_types:
     -
@@ -11,6 +11,10 @@
         type: "object"
         properties:
           queue:
+            type: "string"
+          account_id:
+            type: "string"
+          region:
             type: "string"
           body:
             type: "object"
