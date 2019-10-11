@@ -45,28 +45,21 @@ class SQSSensorTestCase(BaseSensorTestCase):
             raise ClientError({'Error': {'Code': self.error_code}}, 'sqs_test')
 
         def Queue(self, queue):
-            return SQSSensorTestCase.MockQueue()
+            raise ClientError({'Error': {'Code': self.error_code}}, 'sqs_test')
 
     class MockResourceRaiseNoCredentialsError(object):
         def get_queue_by_name(self, **kwargs):
             raise NoCredentialsError()
 
         def Queue(self, queue):
-            return SQSSensorTestCase.MockQueue()
+            raise NoCredentialsError()
 
     class MockResourceRaiseEndpointConnectionError(object):
         def get_queue_by_name(self, **kwargs):
             raise EndpointConnectionError(endpoint_url='')
 
         def Queue(self, queue):
-            return SQSSensorTestCase.MockQueue()
-
-    class MockSessionRaiseUnknownEndpointError(object):
-        def client(self, type, **kwargs):
-            return SQSSensorTestCase.MockStsClient()
-
-        def session(self, type, **kwargs):
-            raise UnknownEndpointError()
+            raise EndpointConnectionError(endpoint_url='')
 
     class MockStsClient(object):
         class MockClientMeta(object):
@@ -252,35 +245,53 @@ class SQSSensorTestCase(BaseSensorTestCase):
     @mock.patch.object(Session, 'client', mock.Mock(return_value=MockStsClient()))
     @mock.patch.object(Session, 'resource',
                        mock.Mock(return_value=MockResourceRaiseClientError('InvalidClientTokenId')))
-    def test_fails_with_invalid_token(self):
-        sensor = self.get_sensor_instance(config=self.full_config)
+    def _fails_with_invalid_token(self, config):
+        sensor = self.get_sensor_instance(config=config)
 
         sensor.setup()
         sensor.poll()
 
         self.assertEqual(self.get_dispatched_triggers(), [])
+
+    def test_fails_with_invalid_token_full_config(self):
+        self._fails_with_invalid_token(self.full_config)
+
+    def test_fails_with_invalid_token_multiaccount_config(self):
+        self._fails_with_invalid_token(self.multiaccount_config)
 
     @mock.patch.object(Session, 'client', mock.Mock(return_value=MockStsClient()))
     @mock.patch.object(Session, 'resource',
                        mock.Mock(return_value=MockResourceRaiseNoCredentialsError()))
-    def test_fails_without_credentials(self):
-        sensor = self.get_sensor_instance(config=self.full_config)
+    def _fails_without_credentials(self, config):
+        sensor = self.get_sensor_instance(config=config)
 
         sensor.setup()
         sensor.poll()
 
         self.assertEqual(self.get_dispatched_triggers(), [])
+
+    def test_fails_without_credentials_full_config(self):
+        self._fails_without_credentials(self.full_config)
+
+    def test_fails_without_credentials_multiaccount_config(self):
+        self._fails_without_credentials(self.multiaccount_config)
 
     @mock.patch.object(Session, 'client', mock.Mock(return_value=MockStsClient()))
     @mock.patch.object(Session, 'resource',
                        mock.Mock(return_value=MockResourceRaiseEndpointConnectionError()))
-    def test_fails_with_invalid_region(self):
-        sensor = self.get_sensor_instance(config=self.full_config)
+    def _fails_with_invalid_region(self, config):
+        sensor = self.get_sensor_instance(config=config)
 
         sensor.setup()
         sensor.poll()
 
         self.assertEqual(self.get_dispatched_triggers(), [])
+
+    def test_fails_with_invalid_region_full_config(self):
+        self._fails_with_invalid_region(self.full_config)
+
+    def test_fails_with_invalid_region_multiaccount_config(self):
+        self._fails_with_invalid_region(self.multiaccount_config)
 
     @mock.patch.object(Session, 'client', mock.Mock(return_value=MockStsClientRaiseClientError()))
     @mock.patch.object(Session, 'resource', mock.Mock(return_value=MockResource()))
