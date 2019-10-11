@@ -14,6 +14,7 @@ from botocore.exceptions import ClientError
 from st2common.runners.base_action import Action
 from ec2parsers import ResultSets
 
+DEFAULT = 'default'
 
 class BaseAction(Action):
 
@@ -63,11 +64,15 @@ class BaseAction(Action):
 
         self.session = Session(aws_access_key_id=self.credentials['aws_access_key_id'],
                                aws_secret_access_key=self.credentials['aws_secret_access_key'])
-        self.account_id = self.session.client('sts').get_caller_identity().get('Account')
+        try:
+            self.account_id = self.session.client('sts').get_caller_identity().get('Account')
+            self.cross_roles_arns = {
+                arn.split(':')[4]: arn for arn in self.config.get('action', {}).get('roles_arns', [])
+            }
+        except ClientError:
+            self.account_id = DEFAULT
+            self.logger.error('Could not obtain the ID of the current account. Cannot work cross region/account')
 
-        self.cross_roles_arns = {
-            arn.split(':')[4]: arn for arn in self.config.get('action', {}).get('roles_arns', [])
-        }
         self.resultsets = ResultSets()
 
     def assume_role(self, account_id):
@@ -84,8 +89,10 @@ class BaseAction(Action):
                 })
             except ClientError:
                 self._logger.error('Could not assume role on account with id: %s'.format(account_id))
+                raise
             except KeyError:
                 self._logger.error('Could not find cross region role ARN in the config file.')
+                raise
 
     def ec2_connect(self):
         region = self.credentials['region']
@@ -129,9 +136,20 @@ class BaseAction(Action):
                 tag_dict[k] = v
         return tag_dict
 
-    def wait_for_state(self, instance_id, state, account_id, region, timeout=10, retries=3):
+    def wait_for_state(self, instance_id, state, account_id=None, region=None, timeout=10, retries=3):
         state_list = {}
-        self.assume_role(account_id, region)
+
+        if self.account_id == DEFAULT and account_id:
+            return None
+
+        try:
+            self.assume_role(account_id)
+        except Exception:
+            return None
+
+        if region:
+            self.credentials['region'] = region
+
         obj = self.ec2_connect()
         eventlet.sleep(timeout)
         instance_list = []
@@ -160,7 +178,13 @@ class BaseAction(Action):
         module = importlib.import_module(module_path)
 
         if 'account_id' in kwargs:
-            self.assume_role(kwargs.pop('account_id'))
+            if self.account_id == DEFAULT:
+                return None
+            try:
+                self.assume_role(kwargs.pop('account_id'))
+            except Exception:
+                return None
+
         if 'region' in kwargs:
             self.credentials['region'] = kwargs.pop('region')
 
