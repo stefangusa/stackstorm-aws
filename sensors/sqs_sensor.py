@@ -32,6 +32,7 @@ from botocore.exceptions import EndpointConnectionError
 
 from st2reactor.sensor.base import PollingSensor
 
+DEFAULT = 'default'
 
 class AWSSQSSensor(PollingSensor):
     def __init__(self, sensor_service, config=None, poll_interval=5):
@@ -52,6 +53,10 @@ class AWSSQSSensor(PollingSensor):
 
         for queue in self.input_queues:
             account_id, region = self._get_info(queue)
+
+            if self.account_id == DEFAULT and account_id != self.account_id:
+                continue
+
             msgs = self._receive_messages(queue=self._get_queue(queue, account_id, region),
                                           num_messages=self.max_number_of_messages)
             for msg in msgs:
@@ -111,11 +116,6 @@ class AWSSQSSensor(PollingSensor):
         else:
             self.input_queues = []
 
-        cross_roles_arns = {
-            arn.split(':')[4]: arn for arn in self._get_config_entry('roles_arns', 'sqs_sensor') or []
-        }
-        required_accounts = {self._get_info(queue)[0] for queue in self.input_queues}
-
         # checker configuration is update, or not
         def _is_same_credentials(session, account_id):
             c = session.get_credentials()
@@ -127,18 +127,27 @@ class AWSSQSSensor(PollingSensor):
             else:
                 return same_credentials
 
-        for account_id in required_accounts:
-            if account_id != self.account_id and account_id not in cross_roles_arns:
-                continue
+        if self.account_id == DEFAULT:
+            if not _is_same_credentials(self.sessions[self.account_id], self.account_id):
+                self._setup_session()
+        else:
+            cross_roles_arns = {
+                arn.split(':')[4]: arn for arn in self._get_config_entry('roles_arns', 'sqs_sensor') or []
+            }
+            required_accounts = {self._get_info(queue)[0] for queue in self.input_queues}
 
-            session = self.sessions.get(account_id, None)
-            same_credentials = _is_same_credentials(session, account_id) if session else False
+            for account_id in required_accounts:
+                if account_id != self.account_id and account_id not in cross_roles_arns:
+                    continue
 
-            if session is None or not same_credentials:
-                if account_id == self.account_id:
-                    self._setup_session()
-                else:
-                    self._setup_multiaccount_session(account_id, cross_roles_arns)
+                session = self.sessions.get(account_id, None)
+                same_credentials = _is_same_credentials(session, account_id) if session else False
+
+                if session is None or not same_credentials:
+                    if account_id == self.account_id:
+                        self._setup_session()
+                    else:
+                        self._setup_multiaccount_session(account_id, cross_roles_arns)
 
     def _setup_session(self):
         ''' Setup Boto3 structures '''
@@ -146,7 +155,12 @@ class AWSSQSSensor(PollingSensor):
                           aws_secret_access_key=self.secret_access_key)
 
         if not self.account_id:
-            self.account_id = session.client('sts').get_caller_identity().get('Account')
+            try:
+                self.account_id = session.client('sts').get_caller_identity().get('Account')
+            except ClientError:
+                self.account_id = DEFAULT
+                self._logger.error('Could not obtain the ID of the current account. Cannot work cross region/account')
+
             self.credentials[self.account_id] = (self.access_key_id, self.secret_access_key, None)
 
         self.sessions[self.account_id] = session
