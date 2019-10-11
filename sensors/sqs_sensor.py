@@ -46,25 +46,10 @@ class AWSSQSSensor(PollingSensor):
         self.sessions = {}
         self.sqs_res = {}
 
-        self.cross_roles_arns = {
-            arn.split(':')[4]: arn for arn in (self._get_config_entry('roles_arns', 'sqs_sensor') or [])
-        }
-
-        self._may_setup_sessions()
-
     def poll(self):
-        queues = self._get_config_entry(key='input_queues', prefix='sqs_sensor')
-
-        # XXX: This is a hack as from datastore we can only receive a string while
-        # from config.yaml we can receive a list
-        if isinstance(queues, six.string_types):
-            self.input_queues = [x.strip() for x in queues.split(',')]
-        elif isinstance(queues, list):
-            self.input_queues = queues
-        else:
-            self.input_queues = []
-
         # setting SQS ServiceResource object from the parameter of datastore or configuration file
+        self._may_setup_sqs()
+
         for queue in self.input_queues:
             account_id, region = self._get_info(queue)
             msgs = self._receive_messages(queue=self._get_queue(queue, account_id, region),
@@ -107,38 +92,53 @@ class AWSSQSSensor(PollingSensor):
 
         return value
 
-    def _may_setup_sessions(self):
+    def _may_setup_sqs(self):
+        self.access_key_id = self._get_config_entry('aws_access_key_id')
+        self.secret_access_key = self._get_config_entry('aws_secret_access_key')
         self.aws_region = self._get_config_entry('region')
         self.max_number_of_messages = self._get_config_entry('max_number_of_messages', prefix='sqs_other')
 
-        self.access_key_id = self._get_config_entry('aws_access_key_id')
-        self.secret_access_key = self._get_config_entry('aws_secret_access_key')
+        if not self.account_id:
+            self._setup_session()
 
-        self._setup_session()
+        queues = self._get_config_entry(key='input_queues', prefix='sqs_sensor')
+        # XXX: This is a hack as from datastore we can only receive a string while
+        # from config.yaml we can receive a list
+        if isinstance(queues, six.string_types):
+            self.input_queues = [x.strip() for x in queues.split(',')]
+        elif isinstance(queues, list):
+            self.input_queues = queues
+        else:
+            self.input_queues = []
+
+        cross_roles_arns = {
+            arn.split(':')[4]: arn for arn in self._get_config_entry('roles_arns', 'sqs_sensor') or []
+        }
+        required_accounts = {self._get_info(queue)[0] for queue in self.input_queues}
 
         # checker configuration is update, or not
         def _is_same_credentials(session, account_id):
             c = session.get_credentials()
-
             same_credentials = c is not None and \
                 c.access_key == self.credentials[account_id][0] and \
                 c.secret_key == self.credentials[account_id][1]
-
             if account_id != self.account_id:
                 return same_credentials and c.token == self.credentials[account_id][2]
             else:
                 return same_credentials
 
-        for account_id in self.cross_roles_arns:
-            session = self.sessions.get(account_id, None)
+        for account_id in required_accounts:
+            if account_id != self.account_id and account_id not in cross_roles_arns:
+                continue
 
+            session = self.sessions.get(account_id, None)
             same_credentials = _is_same_credentials(session, account_id) if session else False
 
             if session is None or not same_credentials:
                 if account_id == self.account_id:
                     self._setup_session()
                 else:
-                    self._setup_multiaccount_session(account_id)
+                    self._setup_multiaccount_session(account_id, cross_roles_arns)
 
     def _setup_session(self):
         ''' Setup Boto3 structures '''
@@ -151,10 +151,10 @@ class AWSSQSSensor(PollingSensor):
 
         self.sessions[self.account_id] = session
 
-    def _setup_multiaccount_session(self, account_id):
+    def _setup_multiaccount_session(self, account_id, cross_roles_arns):
         try:
             assumed_role = self.sessions[self.account_id].client('sts').assume_role(
-                RoleArn=self.cross_roles_arns[account_id],
+                RoleArn=cross_roles_arns[account_id],
                 RoleSessionName='StackStormEvents'
             )
         except ClientError:
