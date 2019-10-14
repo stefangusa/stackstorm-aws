@@ -14,8 +14,6 @@ from botocore.exceptions import ClientError
 from st2common.runners.base_action import Action
 from ec2parsers import ResultSets
 
-DEFAULT = 'default'
-
 class BaseAction(Action):
 
     def __init__(self, config):
@@ -47,11 +45,6 @@ class BaseAction(Action):
         secret_access_key = config.get('aws_secret_access_key', None)
         region = config.get('region', None)
 
-        if access_key_id == "None":
-            access_key_id = None
-        if secret_access_key == "None":
-            secret_access_key = None
-
         if access_key_id and secret_access_key:
             self.credentials['aws_access_key_id'] = access_key_id
             self.credentials['aws_secret_access_key'] = secret_access_key
@@ -64,14 +57,11 @@ class BaseAction(Action):
 
         self.session = Session(aws_access_key_id=self.credentials['aws_access_key_id'],
                                aws_secret_access_key=self.credentials['aws_secret_access_key'])
-        try:
-            self.account_id = self.session.client('sts').get_caller_identity().get('Account')
-            self.cross_roles_arns = {
-                arn.split(':')[4]: arn for arn in self.config.get('action', {}).get('roles_arns', [])
-            }
-        except ClientError:
-            self.account_id = DEFAULT
-            self.logger.error('Could not obtain the ID of the current account. Cannot work cross region/account')
+
+        self.account_id = self.session.client('sts').get_caller_identity().get('Account')
+        self.cross_roles_arns = {
+            arn.split(':')[4]: arn for arn in self.config.get('action', {}).get('roles_arns', [])
+        }
 
         self.resultsets = ResultSets()
 
@@ -85,13 +75,13 @@ class BaseAction(Action):
                 self.credentials.update({
                     'aws_access_key_id': assumed_role["Credentials"]["AccessKeyId"],
                     'aws_secret_access_key': assumed_role["Credentials"]["SecretAccessKey"],
-                    'aws_session_token': assumed_role["Credentials"]["SessionToken"]
+                    'security_token': assumed_role["Credentials"]["SessionToken"]
                 })
             except ClientError:
-                self._logger.error('Could not assume role on account with id: %s'.format(account_id))
+                self.logger.error('Could not assume role on account with id: %s'.format(account_id))
                 raise
             except KeyError:
-                self._logger.error('Could not find cross region role ARN in the config file.')
+                self.logger.error('Could not find cross region role ARN in the config file.')
                 raise
 
     def ec2_connect(self):
@@ -139,14 +129,8 @@ class BaseAction(Action):
     def wait_for_state(self, instance_id, state, account_id=None, region=None, timeout=10, retries=3):
         state_list = {}
 
-        if self.account_id == DEFAULT and account_id:
-            return None
-
-        try:
+        if account_id:
             self.assume_role(account_id)
-        except Exception:
-            return None
-
         if region:
             self.credentials['region'] = region
 
@@ -178,13 +162,7 @@ class BaseAction(Action):
         module = importlib.import_module(module_path)
 
         if 'account_id' in kwargs:
-            if self.account_id == DEFAULT:
-                return None
-            try:
-                self.assume_role(kwargs.pop('account_id'))
-            except Exception:
-                return None
-
+            self.assume_role(kwargs.pop('account_id'))
         if 'region' in kwargs:
             self.credentials['region'] = kwargs.pop('region')
 

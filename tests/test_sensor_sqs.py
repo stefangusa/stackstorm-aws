@@ -95,17 +95,6 @@ class SQSSensorTestCase(BaseSensorTestCase):
         def assume_role(self, RoleArn, RoleSessionName):
             raise ClientError({'Error': {'Code': 'AccessDenied'}}, 'sqs_test')
 
-    class MockStsClientRaiseClientErrorGettingIdentity(object):
-        class MockClientMeta(object):
-            def __init__(self):
-                self.service_model = {}
-
-        def __init__(self):
-            self.meta = self.MockClientMeta()
-
-        def get_caller_identity(self):
-            raise ClientError({'Error': {'Code': 'InvalidClientTokenId'}}, 'sqs_test')
-
     class MockCallerIdentity(object):
         def get(self, attribute):
             if attribute == 'Account':
@@ -319,24 +308,6 @@ class SQSSensorTestCase(BaseSensorTestCase):
         self.assertNotEqual(self.get_dispatched_triggers(), [])
 
     def test_fails_assuming_role_multiaccount_config(self):
-        self._fails_assuming_role(self.multiaccount_config)
-        self.assertEqual(self.get_dispatched_triggers(), [])
-
-    @mock.patch.object(Session, 'client', mock.Mock(return_value=MockStsClientRaiseClientErrorGettingIdentity()))
-    @mock.patch.object(Session, 'resource', mock.Mock(return_value=MockResource(['{"foo":"bar"}'])))
-    def _fails_get_caller_identity(self, config):
-        sensor = self.get_sensor_instance(config=config)
-
-        sensor.setup()
-        sensor.poll()
-
-    def test_fails_get_caller_identity_full_config(self):
-        self._fails_get_caller_identity(self.full_config)
-
-        self.assertTriggerDispatched(trigger='aws.sqs_new_message')
-        self.assertNotEqual(self.get_dispatched_triggers(), [])
-
-    def test_fails_get_caller_identity_multiaccount_config(self):
         self._fails_assuming_role(self.multiaccount_config)
         self.assertEqual(self.get_dispatched_triggers(), [])
 

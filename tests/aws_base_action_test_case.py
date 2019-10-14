@@ -15,15 +15,56 @@
 import yaml
 
 from st2tests.base import BaseActionTestCase
+from botocore.exceptions import ClientError
 
 
 class AWSBaseActionTestCase(BaseActionTestCase):
     __test__ = False
 
+    class MockStsClient(object):
+        class MockClientMeta(object):
+            def __init__(self):
+                self.service_model = {}
+
+        def __init__(self):
+            self.meta = self.MockClientMeta()
+
+        def get_caller_identity(self):
+            return AWSBaseActionTestCase.MockCallerIdentity()
+
+        def assume_role(self, RoleArn, RoleSessionName):
+            return {
+                'Credentials': {
+                    'AccessKeyId': 'access_key_id_example',
+                    'SecretAccessKey': 'secret_access_key_example',
+                    'SessionToken': 'session_token_example'
+                }
+            }
+
+    class MockStsClientRaiseClientError(object):
+        class MockClientMeta(object):
+            def __init__(self):
+                self.service_model = {}
+
+        def __init__(self):
+            self.meta = self.MockClientMeta()
+
+        def get_caller_identity(self):
+            return AWSBaseActionTestCase.MockCallerIdentity()
+
+        def assume_role(self, RoleArn, RoleSessionName):
+            raise ClientError({'Error': {'Code': 'AccessDenied'}}, 'sqs_test')
+
+    class MockCallerIdentity(object):
+        def get(self, attribute):
+            if attribute == 'Account':
+                return '111222333444'
+
     def setUp(self):
         super(AWSBaseActionTestCase, self).setUp()
 
         self._full_config = self.load_yaml('full.yaml')
+        self._multiaccount_config = self.load_yaml('multiaccount.yaml')
 
     def load_yaml(self, filename):
         return yaml.safe_load(self.get_fixture_content(filename))
@@ -31,3 +72,7 @@ class AWSBaseActionTestCase(BaseActionTestCase):
     @property
     def full_config(self):
         return self._full_config
+
+    @property
+    def multiaccount_config(self):
+        return self._multiaccount_config

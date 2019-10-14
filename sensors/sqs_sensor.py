@@ -32,8 +32,6 @@ from botocore.exceptions import EndpointConnectionError
 
 from st2reactor.sensor.base import PollingSensor
 
-DEFAULT = 'default'
-
 class AWSSQSSensor(PollingSensor):
     def __init__(self, sensor_service, config=None, poll_interval=5):
         super(AWSSQSSensor, self).__init__(sensor_service=sensor_service, config=config,
@@ -53,10 +51,6 @@ class AWSSQSSensor(PollingSensor):
 
         for queue in self.input_queues:
             account_id, region = self._get_info(queue)
-
-            if self.account_id == DEFAULT and account_id != self.account_id:
-                continue
-
             msgs = self._receive_messages(queue=self._get_queue(queue, account_id, region),
                                           num_messages=self.max_number_of_messages)
             for msg in msgs:
@@ -127,27 +121,23 @@ class AWSSQSSensor(PollingSensor):
             else:
                 return same_credentials
 
-        if self.account_id == DEFAULT:
-            if not _is_same_credentials(self.sessions[self.account_id], self.account_id):
-                self._setup_session()
-        else:
-            cross_roles_arns = {
-                arn.split(':')[4]: arn for arn in self._get_config_entry('roles_arns', 'sqs_sensor') or []
-            }
-            required_accounts = {self._get_info(queue)[0] for queue in self.input_queues}
+        cross_roles_arns = {
+            arn.split(':')[4]: arn for arn in self._get_config_entry('roles_arns', 'sqs_sensor') or []
+        }
+        required_accounts = {self._get_info(queue)[0] for queue in self.input_queues}
 
-            for account_id in required_accounts:
-                if account_id != self.account_id and account_id not in cross_roles_arns:
-                    continue
+        for account_id in required_accounts:
+            if account_id != self.account_id and account_id not in cross_roles_arns:
+                continue
 
-                session = self.sessions.get(account_id, None)
-                same_credentials = _is_same_credentials(session, account_id) if session else False
+            session = self.sessions.get(account_id, None)
+            same_credentials = _is_same_credentials(session, account_id) if session else False
 
-                if session is None or not same_credentials:
-                    if account_id == self.account_id:
-                        self._setup_session()
-                    else:
-                        self._setup_multiaccount_session(account_id, cross_roles_arns)
+            if session is None or not same_credentials:
+                if account_id == self.account_id:
+                    self._setup_session()
+                else:
+                    self._setup_multiaccount_session(account_id, cross_roles_arns)
 
     def _setup_session(self):
         ''' Setup Boto3 structures '''
@@ -155,12 +145,7 @@ class AWSSQSSensor(PollingSensor):
                           aws_secret_access_key=self.secret_access_key)
 
         if not self.account_id:
-            try:
-                self.account_id = session.client('sts').get_caller_identity().get('Account')
-            except ClientError:
-                self.account_id = DEFAULT
-                self._logger.error('Could not obtain the ID of the current account. Cannot work cross region/account')
-
+            self.account_id = session.client('sts').get_caller_identity().get('Account')
             self.credentials[self.account_id] = (self.access_key_id, self.secret_access_key, None)
 
         self.sessions[self.account_id] = session
@@ -190,7 +175,9 @@ class AWSSQSSensor(PollingSensor):
         try:
             if not self.sqs_res.get(account_id, None):
                 self.sqs_res[account_id] = {}
+
             self.sqs_res[account_id][region] = session.resource('sqs', region_name=region)
+
             return self.sqs_res[account_id][region]
         except UnknownEndpointError:
             self._logger.error("Service 'sqs not available in region %s", region)
@@ -229,7 +216,7 @@ class AWSSQSSensor(PollingSensor):
                 self._logger.warning("Couldn't operate sqs because of invalid credential config")
             else:
                 raise
-        except NoCredentialsError as e:
+        except NoCredentialsError:
             self._logger.warning("Couldn't operate sqs because of invalid credential config")
         except EndpointConnectionError as e:
             self._logger.warning(e)
