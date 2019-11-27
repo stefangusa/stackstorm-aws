@@ -63,7 +63,8 @@ class AWSSQSSensor(PollingSensor):
                                "region": region,
                                "body": json.loads(msg.body)}
                     self._sensor_service.dispatch(trigger="aws.sqs_new_message", payload=payload)
-                    msg.delete()
+                    self._logger.info("Received on (%s, %s, %s) message: %s", account_id, region, queue, msg)
+                    # msg.delete()
 
     def cleanup(self):
         pass
