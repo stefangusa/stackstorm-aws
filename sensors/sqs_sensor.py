@@ -58,13 +58,15 @@ class AWSSQSSensor(PollingSensor):
                                           num_messages=self.max_number_of_messages)
             for msg in msgs:
                 if msg:
-                    payload = {"queue": queue,
-                               "account_id": account_id,
-                               "region": region,
-                               "body": json.loads(msg.body)}
-                    self._sensor_service.dispatch(trigger="aws.sqs_new_message", payload=payload)
+                    body = self._create_body(self.sessions[account_id], json.loads(msg.body))
+                    if body:
+                        payload = {"queue": queue,
+                                   "account_id": account_id,
+                                   "region": region,
+                                   "body": body}
+                        self._sensor_service.dispatch(trigger="aws.sqs_new_message", payload=payload)
                     self._logger.info("Received on (%s, %s, %s) message: %s", account_id, region, queue, msg)
-                    # msg.delete()
+                    msg.delete()
 
     def cleanup(self):
         pass
@@ -79,6 +81,10 @@ class AWSSQSSensor(PollingSensor):
 
     def remove_trigger(self, trigger):
         pass
+
+    def _create_body(self, session, body):
+        ''' This method can be changed to compute another body. '''
+        return body
 
     def _get_config_entry(self, key, prefix=None):
         ''' Get configuration values either from Datastore or config file. '''
