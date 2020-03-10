@@ -54,8 +54,18 @@ class AWSSQSSensor(PollingSensor):
 
         for queue in self.input_queues:
             account_id, region = self._get_info(queue)
-            msgs = self._receive_messages(queue=self._get_queue(queue, account_id, region),
-                                          num_messages=self.max_number_of_messages)
+
+            while True:
+                try:
+                    msgs = self._receive_messages(queue=self._get_queue(queue, account_id, region),
+                                                  num_messages=self.max_number_of_messages)
+                except ClientError as e:
+                    if e.response['Error']['Code'] == 'ExpiredToken':
+                        self._setup_multiaccount_session(account_id)
+                        continue
+                    raise
+                break
+
             for msg in msgs:
                 if msg:
                     payload = {"queue": queue,
@@ -126,14 +136,14 @@ class AWSSQSSensor(PollingSensor):
                 (account_id == self.account_id or c.token == self.credentials[account_id][2])
 
         # build a map between 'account_id' and its 'role arn' by parsing the matching config entry
-        cross_roles_arns = {
+        self.cross_roles_arns = {
             arn.split(':')[4]: arn
             for arn in self._get_config_entry('roles_arns', 'sqs_sensor') or []
         }
         required_accounts = {self._get_info(queue)[0] for queue in self.input_queues}
 
         for account_id in required_accounts:
-            if account_id != self.account_id and account_id not in cross_roles_arns:
+            if account_id != self.account_id and account_id not in self.cross_roles_arns:
                 continue
 
             session = self.sessions.get(account_id)
@@ -141,7 +151,7 @@ class AWSSQSSensor(PollingSensor):
                 if account_id == self.account_id:
                     self._setup_session()
                 else:
-                    self._setup_multiaccount_session(account_id, cross_roles_arns)
+                    self._setup_multiaccount_session(account_id)
 
     def _setup_session(self):
         ''' Setup Boto3 session '''
@@ -155,11 +165,11 @@ class AWSSQSSensor(PollingSensor):
         self.sessions[self.account_id] = session
         self.sqs_res.pop(self.account_id, None)
 
-    def _setup_multiaccount_session(self, account_id, cross_roles_arns):
+    def _setup_multiaccount_session(self, account_id):
         ''' Assume role and setup session for the cross-account capability'''
         try:
             assumed_role = self.sessions[self.account_id].client('sts').assume_role(
-                RoleArn=cross_roles_arns[account_id],
+                RoleArn=self.cross_roles_arns[account_id],
                 RoleSessionName='StackStormEvents'
             )
         except ClientError:
