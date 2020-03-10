@@ -61,6 +61,7 @@ class AWSSQSSensor(PollingSensor):
                                                   num_messages=self.max_number_of_messages)
                 except ClientError as e:
                     if e.response['Error']['Code'] == 'ExpiredToken':
+                        self._logger.debug("Expired Token. Trying to reassume role on %s.", account_id)
                         self._setup_multiaccount_session(account_id)
                         continue
                     raise
