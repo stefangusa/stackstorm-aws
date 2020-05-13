@@ -80,7 +80,7 @@ class BaseAction(Action):
             self.credentials.update({
                 'aws_access_key_id': assumed_role["Credentials"]["AccessKeyId"],
                 'aws_secret_access_key': assumed_role["Credentials"]["SecretAccessKey"],
-                'security_token': assumed_role["Credentials"]["SessionToken"]
+                'aws_session_token': assumed_role["Credentials"]["SessionToken"]
             })
         except ClientError:
             self.logger.error('Could not assume role on account with id: %s', account_id)
