@@ -161,8 +161,9 @@ class AWSSQSSensor(PollingSensor):
         }
         required_accounts = {self._get_info(queue)[0] for queue in self.input_queues}
 
-        if not _is_same_credentials(self.default_session, self.account_id,
-                                    self.default_credentials):
+        if not self.default_session or \
+                not _is_same_credentials(self.default_session, self.account_id,
+                                         self.default_credentials):
             self._setup_session()
 
         for account_id in required_accounts:
@@ -170,12 +171,13 @@ class AWSSQSSensor(PollingSensor):
                 continue
 
             session = self.sessions.get(account_id)
-            if not _is_same_credentials(session, account_id, self.credentials[account_id]):
-                if account_id == self.account_id and self.account_id not in self.cross_roles:
+            if account_id == self.account_id and self.account_id not in self.cross_roles:
+                if not _is_same_credentials(session, account_id, self.default_credentials):
                     self._setup_session()
                     self.sessions[self.account_id] = self.default_session
-                else:
-                    self._setup_multiaccount_session(account_id)
+            elif account_id not in self.credentials or \
+                    not _is_same_credentials(session, account_id, self.credentials[account_id]):
+                self._setup_multiaccount_session(account_id)
 
     def _setup_session(self):
         ''' Setup Boto3 session '''
@@ -193,6 +195,7 @@ class AWSSQSSensor(PollingSensor):
     def _setup_multiaccount_session(self, account_id):
         ''' Assume role and setup session for the cross-account capability'''
         try:
+            # pylint: disable=no-member
             assumed_role = self.default_session.client('sts').assume_role(
                 RoleArn=self.cross_roles[account_id],
                 RoleSessionName='StackStormEvents'
