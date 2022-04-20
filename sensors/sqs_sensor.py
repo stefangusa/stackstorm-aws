@@ -161,7 +161,8 @@ class AWSSQSSensor(PollingSensor):
         }
         required_accounts = {self._get_info(queue)[0] for queue in self.input_queues}
 
-        if not _is_same_credentials(self.default_session, self.account_id, self.default_credentials):
+        if not _is_same_credentials(self.default_session, self.account_id,
+                                    self.default_credentials):
             self._setup_session()
 
         for account_id in required_accounts:
