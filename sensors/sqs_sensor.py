@@ -162,7 +162,7 @@ class AWSSQSSensor(PollingSensor):
         }
         self._logger.error('cross_roles: %s', str(self.cross_roles))
         required_accounts = {self._get_info(queue)[0] for queue in self.input_queues}
-        self._logger.error('required_accounts: %s', str(self.required_accounts))
+        self._logger.error('required_accounts: %s', str(required_accounts))
         if not self.default_session or \
                 not _is_same_credentials(self.default_session, self.account_id,
                                          self.default_credentials):
