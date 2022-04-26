@@ -201,7 +201,7 @@ class AWSSQSSensor(PollingSensor):
             self.account_id = session.client('sts').get_caller_identity().get('Account')
             self.default_credentials = (self.access_key_id, self.secret_access_key, None)
         self._logger.error('3')
-        self._logger.error('default_session: %s', session._session.identity_arn)
+        self._logger.error('default_session: %s', session._session._config)
         self.default_session = session
         self.sqs_res.pop(self.account_id, None)
 
@@ -228,7 +228,7 @@ class AWSSQSSensor(PollingSensor):
             aws_secret_access_key=self.credentials[account_id][1],
             aws_session_token=self.credentials[account_id][2]
         )
-        self._logger.error('session: %s', session._session.identity_arn)
+        self._logger.error('session: %s', session._session._config)
         self.sessions[account_id] = session
         self.sqs_res.pop(account_id, None)
 
@@ -239,7 +239,7 @@ class AWSSQSSensor(PollingSensor):
             return self.sqs_res[account_id][region]
 
         try:
-            self._logger.error('used session: %s', session._session.identity_arn)
+            self._logger.error('used session: %s', session._session._config)
             self.sqs_res[account_id][region] = session.resource('sqs', region_name=region)
             return self.sqs_res[account_id][region]
         except NoRegionError:
