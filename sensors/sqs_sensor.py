@@ -130,6 +130,7 @@ class AWSSQSSensor(PollingSensor):
                                                              prefix='sqs_other')
 
         if not self.account_id:
+            self._logger.error('1')
             self._setup_session()
 
         queues = self._get_config_entry(key='input_queues', prefix='sqs_sensor')
@@ -159,24 +160,34 @@ class AWSSQSSensor(PollingSensor):
             arn.split(':')[4]: arn
             for arn in self._get_config_entry('roles', 'sqs_sensor') or []
         }
+        self._logger.error('cross_roles: %s', str(self.cross_roles))
         required_accounts = {self._get_info(queue)[0] for queue in self.input_queues}
-
+        self._logger.error('required_accounts: %s', str(self.required_accounts))
         if not self.default_session or \
                 not _is_same_credentials(self.default_session, self.account_id,
                                          self.default_credentials):
+            self._logger.error('4')
             self._setup_session()
 
         for account_id in required_accounts:
+            self._logger.error('5')
             if account_id != self.account_id and account_id not in self.cross_roles:
+                self._logger.error('6')
+                self._logger.error('account_id: %s, self.account_id: %s', account_id, self.account_id)
                 continue
-
+            self._logger.error('7')
             session = self.sessions.get(account_id)
             if account_id == self.account_id and self.account_id not in self.cross_roles:
+                self._logger.error('8')
+                self._logger.error('account_id: %s', self.account_id)
                 if not _is_same_credentials(session, account_id, self.default_credentials):
                     self._setup_session()
-                    self.sessions[self.account_id] = self.default_session
+                self._logger.error('9')
+                self.sessions[self.account_id] = self.default_session
             elif account_id not in self.credentials or \
                     not _is_same_credentials(session, account_id, self.credentials[account_id]):
+                self._logger.error('10')
+                self._logger.error('account_id: %s', account_id)
                 self._setup_multiaccount_session(account_id)
 
     def _setup_session(self):
@@ -185,16 +196,19 @@ class AWSSQSSensor(PollingSensor):
                           aws_secret_access_key=self.secret_access_key)
 
         if not self.account_id:
+            self._logger.error('2')
             # pylint: disable=no-member
             self.account_id = session.client('sts').get_caller_identity().get('Account')
             self.default_credentials = (self.access_key_id, self.secret_access_key, None)
-
+        self._logger.error('3')
         self.default_session = session
         self.sqs_res.pop(self.account_id, None)
 
     def _setup_multiaccount_session(self, account_id):
         ''' Assume role and setup session for the cross-account capability'''
         try:
+            self._logger.error('11')
+            self._logger.error('role: %s', self.cross_roles[account_id])
             # pylint: disable=no-member
             assumed_role = self.default_session.client('sts').assume_role(
                 RoleArn=self.cross_roles[account_id],
