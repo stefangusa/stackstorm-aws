@@ -201,8 +201,9 @@ class AWSSQSSensor(PollingSensor):
             self.account_id = session.client('sts').get_caller_identity().get('Account')
             self.default_credentials = (self.access_key_id, self.secret_access_key, None)
         self._logger.error('3')
-        self._logger.error('default_session: %s', session)
+        self._logger.error('default_session: %s', session._session.identity_arn)
         self.default_session = session
+        self.sqs_res.pop(self.account_id, None)
 
     def _setup_multiaccount_session(self, account_id):
         ''' Assume role and setup session for the cross-account capability'''
@@ -227,16 +228,18 @@ class AWSSQSSensor(PollingSensor):
             aws_secret_access_key=self.credentials[account_id][1],
             aws_session_token=self.credentials[account_id][2]
         )
-        self._logger.error('sessions[%s]: %s', account_id, session)
+        self._logger.error('session: %s', session._session.identity_arn)
         self.sessions[account_id] = session
         self.sqs_res.pop(account_id, None)
 
     def _setup_sqs(self, session, account_id, region):
         ''' Setup SQS resources'''
+        self._logger.error("sessions: %s", self.sessions)
         if region in self.sqs_res[account_id]:
             return self.sqs_res[account_id][region]
 
         try:
+            self._logger.error('used session: %s', session._session.identity_arn)
             self.sqs_res[account_id][region] = session.resource('sqs', region_name=region)
             return self.sqs_res[account_id][region]
         except NoRegionError:
