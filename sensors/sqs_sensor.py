@@ -201,8 +201,8 @@ class AWSSQSSensor(PollingSensor):
             self.account_id = session.client('sts').get_caller_identity().get('Account')
             self.default_credentials = (self.access_key_id, self.secret_access_key, None)
         self._logger.error('3')
+        self._logger.error('default_session: %s', session)
         self.default_session = session
-        self.sqs_res.pop(self.account_id, None)
 
     def _setup_multiaccount_session(self, account_id):
         ''' Assume role and setup session for the cross-account capability'''
@@ -227,6 +227,7 @@ class AWSSQSSensor(PollingSensor):
             aws_secret_access_key=self.credentials[account_id][1],
             aws_session_token=self.credentials[account_id][2]
         )
+        self._logger.error('sessions[%s]: %s', account_id, session)
         self.sessions[account_id] = session
         self.sqs_res.pop(account_id, None)
 
