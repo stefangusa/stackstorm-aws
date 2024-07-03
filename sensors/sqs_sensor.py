@@ -120,6 +120,9 @@ class AWSSQSSensor(PollingSensor):
         if not value and config.get('setup', None):
             value = config['setup'].get(key, None)
 
+        if value == "None":
+            value = None
+
         return value
 
     def _may_setup_sqs(self):
